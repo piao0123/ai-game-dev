@@ -1,0 +1,61 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%;
+    background-color: #020403; color: #00FF66;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Courier New', monospace;
+    overflow: hidden; user-select: none;
+}
+#game-container { position: relative; width: 100vw; height: 100vh; background: #030705; }
+canvas { display: block; cursor: crosshair; }
+
+.hud-overlay {
+    position: absolute; top: 20px; left: 25px; right: 50px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none; font-weight: bold; font-size: 11px;
+    letter-spacing: 1.5px; text-shadow: 0 0 8px rgba(0,255,102,0.6);
+    z-index: 10;
+}
+.status-box {
+    background: rgba(4, 16, 10, 0.90); border: 1px solid #00FF66;
+    padding: 12px 18px; border-radius: 4px;
+    box-shadow: 0 0 15px rgba(0,255,102,0.2); min-width: 280px;
+}
+.bar-outer {
+    width: 100%; height: 10px; background: rgba(0, 30, 15, 0.9);
+    border: 1px solid #00FF66; margin-top: 3px; position: relative;
+    box-shadow: inset 0 0 5px #000;
+}
+.bar-inner { height: 100%; width: 100%; background: #00FF66; transition: width 0.05s linear; }
+.bar-inner.blind { background: #FFCC00; }
+.bar-inner.shield { background: #00CCFF; }
+
+#alarm-banner {
+    display: none; position: absolute; top: 85px; left: 50%; transform: translateX(-50%);
+    color: #FF3344; font-size: 15px; font-weight: bold; letter-spacing: 3px;
+    text-shadow: 0 0 10px #FF3344; animation: blink 0.8s infinite alternate;
+    z-index: 10; pointer-events: none;
+    background: rgba(20, 4, 6, 0.85); padding: 6px 16px; border: 1px solid #FF3344; border-radius: 4px;
+}
+@keyframes blink { from { opacity: 1; } to { opacity: 0.3; } }
+
+#game-over-screen {
+    display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(2, 6, 4, 0.94); z-index: 100; flex-direction: column;
+    justify-content: center; align-items: center; text-shadow: 0 0 10px #00FF66;
+}
+#game-over-screen h1 { font-size: 42px; margin-bottom: 10px; color: #FF3344; letter-spacing: 4px; }
+#game-over-screen p { font-size: 16px; color: #00FF66; margin-bottom: 25px; }
+.restart-btn {
+    background: rgba(0, 255, 102, 0.15); border: 1px solid #00FF66; color: #00FF66;
+    padding: 12px 30px; font-weight: bold; cursor: pointer;
+    font-family: inherit; font-size: 14px; letter-spacing: 2px;
+    box-shadow: 0 0 15px rgba(0,255,102,0.3); transition: all 0.2s;
+}
+.restart-btn:hover { background: #00FF66; color: #000; }
+
+.log-panel {
+    position: absolute; bottom: 75px; left: 25px;
+    pointer-events: none; font-size: 11px; color: #00FF66;
+    opacity: 0.85; max-height: 90px; text-shadow: 0 0 4px #00FF66;
+    z-index: 10;
+}
