@@ -121,13 +121,15 @@ const WEAPONS = {
 };
 
 let currentWeapon = WEAPONS.RIFLE;
+let unlockedWeapons = [WEAPONS.RIFLE.id]; // 默认开局只解锁步枪
+
 let shootCooldownTimer = 0;
 
 let wave = 1;
 let killCount = 0;
 let isGameOver = false;
 let waveTransitionTimer = 0;
-let gateAlarmCooldown = 0; // 闸门触发警报的冷却防抖
+let gateAlarmCooldown = 0;
 
 const player = { 
     x: 100, y: 350, angle: 0, speed: 3.8, walkCycle: 0, 
@@ -153,27 +155,25 @@ const particles = [];
 const dropItems = []; 
 
 let obstacles = [];
-let securityGates = []; // 独立存储可通行的安检闸门
+let securityGates = [];
 let zones = [];
 let props = [];
 let waypoints = [];
 let cameras = [];
 let enemies = [];
 
-// --- 复杂战术机场地图布局 ---
+// --- 地图布局初始化 ---
 function initMapLayout() {
     const margin = 40;
     const w = width - margin * 2;
     const h = height - margin * 2;
 
-    // 实体障碍（阻挡视线与通行）
     obstacles = [
         { x: margin, y: margin, w: w, h: 12, type: 'solid' },
         { x: margin, y: height - margin - 12, w: w, h: 12, type: 'solid' },
         { x: margin, y: margin, w: 12, h: h, type: 'solid' },
         { x: width - margin - 12, y: margin, w: 12, h: h, type: 'solid' },
 
-        // 第一道墙壁：上段高 (h*0.30)，下段高 (h*0.40)，中间空档为 h*0.30 (从 y: margin+h*0.30 到 margin+h*0.60)
         { x: margin + w * 0.28, y: margin, w: 12, h: h * 0.30, type: 'solid' },
         { x: margin + w * 0.28, y: margin + h * 0.60, w: 12, h: h * 0.40, type: 'solid' },
 
@@ -190,8 +190,6 @@ function initMapLayout() {
         { x: margin + w * 0.28, y: margin + h * 0.82, w: w * 0.25, h: 10, type: 'low_wall', label: 'JETBRIDGE RAMP' }
     ];
 
-    // 安检闸门：无碰撞，玩家通过会报警引怪
-    // 左侧闸门位于第一道墙中间空档正中央 (margin + h*0.45 减去半门高 20)
     const gate1CenterY = margin + h * 0.45 - 20; 
     securityGates = [
         { x: margin + w * 0.28, y: gate1CenterY, w: 12, h: 40, label: 'SECURITY GATE' },
@@ -411,11 +409,12 @@ window.addEventListener('keydown', e => {
         e.preventDefault();
         if (player.shield > 10) player.shieldActive = !player.shieldActive;
     }
-    if (e.code === 'Digit1') switchWeapon(WEAPONS.RIFLE);
-    if (e.code === 'Digit2') switchWeapon(WEAPONS.PISTOL);
-    if (e.code === 'Digit3') switchWeapon(WEAPONS.SNIPER);
-    if (e.code === 'Digit4') switchWeapon(WEAPONS.SMG);
-    if (e.code === 'Digit5') switchWeapon(WEAPONS.GRENADE);
+    // 切换武器前先检查是否已经解锁该武器
+    if (e.code === 'Digit1' && unlockedWeapons.includes(WEAPONS.RIFLE.id)) switchWeapon(WEAPONS.RIFLE);
+    if (e.code === 'Digit2' && unlockedWeapons.includes(WEAPONS.PISTOL.id)) switchWeapon(WEAPONS.PISTOL);
+    if (e.code === 'Digit3' && unlockedWeapons.includes(WEAPONS.SNIPER.id)) switchWeapon(WEAPONS.SNIPER);
+    if (e.code === 'Digit4' && unlockedWeapons.includes(WEAPONS.SMG.id)) switchWeapon(WEAPONS.SMG);
+    if (e.code === 'Digit5' && unlockedWeapons.includes(WEAPONS.GRENADE.id)) switchWeapon(WEAPONS.GRENADE);
 
     if (e.code === 'KeyR' || e.key === 'r') { if(isGameOver) resetGame(); }
     keys[e.code] = true; keys[e.key.toLowerCase()] = true;
@@ -451,11 +450,20 @@ function createExplosion(x, y, count = 15, color = null) {
     }
 }
 
+// 掉落物生成逻辑（加入随机武器箱）
 function spawnDropItem(x, y) {
     const rand = Math.random();
     if (rand < 0.7) { 
-        const type = rand < 0.35 ? 'medkit' : 'battery';
-        dropItems.push({ x, y, type, timer: 700 });
+        if (rand < 0.25) {
+            dropItems.push({ x, y, type: 'medkit', timer: 700 });
+        } else if (rand < 0.50) {
+            dropItems.push({ x, y, type: 'battery', timer: 700 });
+        } else {
+            const allWps = [WEAPONS.PISTOL, WEAPONS.SNIPER, WEAPONS.SMG, WEAPONS.GRENADE];
+            const lockedWps = allWps.filter(w => !unlockedWeapons.includes(w.id));
+            const wpToDrop = lockedWps.length > 0 ? lockedWps[Math.floor(Math.random() * lockedWps.length)] : allWps[Math.floor(Math.random() * allWps.length)];
+            dropItems.push({ x, y, type: 'weapon', weaponData: wpToDrop, timer: 700 });
+        }
     }
 }
 
@@ -578,6 +586,8 @@ function triggerGameOver(success) {
 
 function resetGame() {
     wave = 1; killCount = 0; isGameOver = false; gateAlarmCooldown = 0;
+    unlockedWeapons = [WEAPONS.RIFLE.id]; // 重新开始时锁定武器
+    currentWeapon = WEAPONS.RIFLE;
     document.getElementById('alarm-banner').style.display = 'none';
     player.hp = 100; player.shield = 100; player.shieldActive = false;
     player.x = 100; player.y = 350;
@@ -613,13 +623,12 @@ function update() {
     player.angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
     if (player.flashTimer > 0) player.flashTimer--;
 
-    // 检查玩家是否穿过安检闸门（触发警报）
     if (gateAlarmCooldown <= 0) {
         securityGates.forEach(gate => {
             if (player.x > gate.x - 12 && player.x < gate.x + gate.w + 12 &&
                 player.y > gate.y && player.y < gate.y + gate.h) {
                 triggerGlobalAlarm();
-                gateAlarmCooldown = 120; // 防止重复高频碰撞触发
+                gateAlarmCooldown = 120;
                 addLog("SECURITY GATE BREACHED! ALARM ACTIVATED!");
                 createExplosion(player.x, player.y, 8, '#FF3344');
             }
@@ -640,6 +649,7 @@ function update() {
         blindEnergy = Math.min(MAX_BLIND_ENERGY, blindEnergy + BLIND_RECOVER_RATE);
     }
 
+    // 处理掉落物拾取
     for (let i = dropItems.length - 1; i >= 0; i--) {
         let item = dropItems[i];
         item.timer--;
@@ -654,6 +664,16 @@ function update() {
                 blindEnergy = Math.min(MAX_BLIND_ENERGY, blindEnergy + 40);
                 addLog("RECOVERED BATTERY (+50 SHIELD / +40 ENERGY)");
                 createExplosion(player.x, player.y, 10, '#00CCFF');
+            } else if (item.type === 'weapon') {
+                const wp = item.weaponData;
+                if (!unlockedWeapons.includes(wp.id)) {
+                    unlockedWeapons.push(wp.id);
+                    addLog(`UNLOCKED NEW WEAPON: [${wp.name}]!`);
+                } else {
+                    addLog(`PICKED UP: [${wp.name}]`);
+                }
+                switchWeapon(wp);
+                createExplosion(player.x, player.y, 12, '#FFFF00');
             }
             dropItems.splice(i, 1);
         }
@@ -947,7 +967,6 @@ function update() {
     document.getElementById('score-count').innerText = `KILLS: ${killCount}`;
 }
 
-// --- 渲染区域与地图物件 ---
 function drawZones() {
     zones.forEach(z => {
         ctx.save();
@@ -1040,19 +1059,16 @@ function drawObstacle(obs) {
 function drawSecurityGates() {
     securityGates.forEach(gate => {
         ctx.save();
-        // 门柱框
         ctx.fillStyle = 'rgba(255, 51, 68, 0.10)';
         ctx.fillRect(gate.x, gate.y, gate.w, gate.h);
         ctx.strokeStyle = '#FF3344';
         ctx.lineWidth = 1.5;
         ctx.strokeRect(gate.x, gate.y, gate.w, gate.h);
         
-        // 两端门柱节点指示灯
         ctx.fillStyle = '#FF3344';
         ctx.fillRect(gate.x - 2, gate.y - 2, 6, 4);
         ctx.fillRect(gate.x - 2, gate.y + gate.h - 2, 6, 4);
 
-        // 红外触发检测激光虚线
         ctx.strokeStyle = 'rgba(255, 51, 68, 0.8)';
         ctx.lineWidth = 1.2;
         ctx.setLineDash([4, 4]);
@@ -1069,7 +1085,7 @@ function drawSecurityGates() {
     });
 }
 
-// --- 左下角武器选择栏绘制（纯图标，无文字） ---
+// 左下角武器槽渲染（支持显示未解锁状态）
 function drawWeaponIcons() {
     const startX = 25;
     const startY = height - 55;
@@ -1081,39 +1097,47 @@ function drawWeaponIcons() {
         let w = WEAPONS[key];
         let x = startX + index * (boxSize + gap);
         let y = startY;
+        let isUnlocked = unlockedWeapons.includes(w.id);
         let isSelected = (w.id === currentWeapon.id);
 
         ctx.save();
-        // 外框背景
-        ctx.fillStyle = isSelected ? 'rgba(0, 255, 102, 0.28)' : 'rgba(4, 16, 10, 0.85)';
-        ctx.strokeStyle = isSelected ? '#FFFF00' : 'rgba(0, 255, 102, 0.4)';
-        ctx.lineWidth = isSelected ? 2 : 1;
-        ctx.fillRect(x, y, boxSize, boxSize);
-        ctx.strokeRect(x, y, boxSize, boxSize);
-
-        // 纯矢量图标绘制 (居中)
-        ctx.strokeStyle = isSelected ? '#FFFF00' : '#00FF66';
-        ctx.fillStyle = isSelected ? '#FFFF00' : '#00FF66';
+        if (!isUnlocked) {
+            ctx.fillStyle = 'rgba(15, 20, 18, 0.6)';
+            ctx.strokeStyle = 'rgba(80, 100, 90, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.fillRect(x, y, boxSize, boxSize);
+            ctx.strokeRect(x, y, boxSize, boxSize);
+            ctx.strokeStyle = 'rgba(80, 100, 90, 0.3)';
+            ctx.fillStyle = 'rgba(80, 100, 90, 0.3)';
+        } else {
+            ctx.fillStyle = isSelected ? 'rgba(0, 255, 102, 0.28)' : 'rgba(4, 16, 10, 0.85)';
+            ctx.strokeStyle = isSelected ? '#FFFF00' : 'rgba(0, 255, 102, 0.4)';
+            ctx.lineWidth = isSelected ? 2 : 1;
+            ctx.fillRect(x, y, boxSize, boxSize);
+            ctx.strokeRect(x, y, boxSize, boxSize);
+            ctx.strokeStyle = isSelected ? '#FFFF00' : '#00FF66';
+            ctx.fillStyle = isSelected ? '#FFFF00' : '#00FF66';
+        }
         ctx.lineWidth = 1.5;
         const cx = x + boxSize / 2;
         const cy = y + boxSize / 2;
 
         ctx.beginPath();
-        if (w.id === 1) { // RIFLE 步枪
+        if (w.id === 1) {
             ctx.strokeRect(cx - 12, cy - 2, 18, 4);
             ctx.fillRect(cx + 6, cy - 1, 5, 2);
             ctx.fillRect(cx - 4, cy + 2, 3, 6);
-        } else if (w.id === 2) { // PISTOL 手枪
+        } else if (w.id === 2) {
             ctx.strokeRect(cx - 7, cy - 3, 12, 3);
             ctx.fillRect(cx - 5, cy, 4, 7);
-        } else if (w.id === 3) { // SNIPER 狙击枪
+        } else if (w.id === 3) {
             ctx.strokeRect(cx - 14, cy - 2, 18, 2);
             ctx.fillRect(cx + 4, cy - 1, 8, 1);
             ctx.fillRect(cx - 4, cy - 4, 8, 2);
-        } else if (w.id === 4) { // SMG 冲锋枪
+        } else if (w.id === 4) {
             ctx.strokeRect(cx - 9, cy - 3, 14, 4);
             ctx.fillRect(cx, cy + 1, 3, 7);
-        } else if (w.id === 5) { // GRENADE 手雷
+        } else if (w.id === 5) {
             ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
             ctx.fillRect(cx - 1.5, cy - 7, 3, 3);
         }
@@ -1159,10 +1183,15 @@ function drawDropItems() {
             ctx.fillStyle = '#00FF66'; ctx.shadowColor = '#00FF66';
             ctx.fillRect(-9, -9, 18, 18);
             ctx.fillStyle = '#000'; ctx.fillRect(-2, -6, 4, 12); ctx.fillRect(-6, -2, 12, 4);
-        } else {
+        } else if (item.type === 'battery') {
             ctx.fillStyle = '#00CCFF'; ctx.shadowColor = '#00CCFF';
             ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#000'; ctx.fillRect(-4, -4, 8, 8);
+        } else if (item.type === 'weapon') {
+            ctx.fillStyle = '#FFFF00'; ctx.shadowColor = '#FFFF00';
+            ctx.fillRect(-9, -9, 18, 18);
+            ctx.fillStyle = '#000'; ctx.font = 'bold 11px monospace';
+            ctx.fillText("W", -4, 4);
         }
         ctx.restore();
     });
@@ -1246,18 +1275,15 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
 function draw() {
     ctx.clearRect(0, 0, width, height);
     
-    // 1. 背景网格
     ctx.strokeStyle = '#08120B'; ctx.lineWidth = 1;
     for(let x = 0; x < width; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); }
     for(let y = 0; y < height; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
     
-    // 2. 地图元素
     drawZones();
     drawProps();
     obstacles.forEach(drawObstacle);
     drawSecurityGates();
 
-    // 3. FOV 视角阴影
     if (player.hp > 0) {
         drawTacticalFOV(player.x, player.y, player.angle, player.fov, player.viewDistance, 'rgba(0, 255, 102, 0.12)', 'rgba(0, 255, 102, 0.4)');
     }
@@ -1275,7 +1301,6 @@ function draw() {
     cameras.forEach(drawCamera);
     drawDropItems();
     
-    // 盲区黑幕特效
     if (blindActive && blindZone) {
         ctx.save();
         ctx.fillStyle = 'rgba(4, 14, 9, 0.88)';
@@ -1284,7 +1309,6 @@ function draw() {
         ctx.restore();
     }
     
-    // 玩家与准星
     if (player.hp > 0) {
         ctx.save();
         ctx.strokeStyle = 'rgba(0, 255, 102, 0.25)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
@@ -1295,7 +1319,6 @@ function draw() {
         drawAgent(player.x, player.y, player.angle, true, player.walkCycle, false, player.hp, player.maxHp, 0, 1.0);
     }
     
-    // 粒子与弹道
     particles.forEach(p => {
         ctx.save();
         ctx.globalAlpha = p.life / p.maxLife;
@@ -1321,7 +1344,6 @@ function draw() {
     
     ctx.shadowBlur = 0;
 
-    // 绘制左下角纯武器图标栏
     drawWeaponIcons();
 }
 
