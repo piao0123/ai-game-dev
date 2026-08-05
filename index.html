@@ -121,7 +121,7 @@ const WEAPONS = {
 };
 
 let currentWeapon = WEAPONS.RIFLE;
-let unlockedWeapons = [WEAPONS.RIFLE.id]; // 默认开局只解锁步枪
+let unlockedWeapons = [WEAPONS.RIFLE.id];
 
 let shootCooldownTimer = 0;
 
@@ -162,7 +162,6 @@ let waypoints = [];
 let cameras = [];
 let enemies = [];
 
-// --- 地图布局初始化 ---
 function initMapLayout() {
     const margin = 40;
     const w = width - margin * 2;
@@ -409,7 +408,6 @@ window.addEventListener('keydown', e => {
         e.preventDefault();
         if (player.shield > 10) player.shieldActive = !player.shieldActive;
     }
-    // 切换武器前先检查是否已经解锁该武器
     if (e.code === 'Digit1' && unlockedWeapons.includes(WEAPONS.RIFLE.id)) switchWeapon(WEAPONS.RIFLE);
     if (e.code === 'Digit2' && unlockedWeapons.includes(WEAPONS.PISTOL.id)) switchWeapon(WEAPONS.PISTOL);
     if (e.code === 'Digit3' && unlockedWeapons.includes(WEAPONS.SNIPER.id)) switchWeapon(WEAPONS.SNIPER);
@@ -450,7 +448,6 @@ function createExplosion(x, y, count = 15, color = null) {
     }
 }
 
-// 掉落物生成逻辑（加入随机武器箱）
 function spawnDropItem(x, y) {
     const rand = Math.random();
     if (rand < 0.7) { 
@@ -586,7 +583,7 @@ function triggerGameOver(success) {
 
 function resetGame() {
     wave = 1; killCount = 0; isGameOver = false; gateAlarmCooldown = 0;
-    unlockedWeapons = [WEAPONS.RIFLE.id]; // 重新开始时锁定武器
+    unlockedWeapons = [WEAPONS.RIFLE.id];
     currentWeapon = WEAPONS.RIFLE;
     document.getElementById('alarm-banner').style.display = 'none';
     player.hp = 100; player.shield = 100; player.shieldActive = false;
@@ -649,7 +646,6 @@ function update() {
         blindEnergy = Math.min(MAX_BLIND_ENERGY, blindEnergy + BLIND_RECOVER_RATE);
     }
 
-    // 处理掉落物拾取
     for (let i = dropItems.length - 1; i >= 0; i--) {
         let item = dropItems[i];
         item.timer--;
@@ -1085,7 +1081,6 @@ function drawSecurityGates() {
     });
 }
 
-// 左下角武器槽渲染（支持显示未解锁状态）
 function drawWeaponIcons() {
     const startX = 25;
     const startY = height - 55;
@@ -1197,14 +1192,17 @@ function drawDropItems() {
     });
 }
 
+// 优化敌人绘制：高亮盲区内的敌人
 function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendingDamage, alpha = 1.0, isObserver = false, enemyShield = 0, maxShield = 80, alert = false) {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(x, y);
 
+    const isInBlind = !isPlayer && inBlindZone(x, y);
+
     if ((hp < maxHp || !isPlayer) && hp > 0) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(-20, -36, 40, 5);
-        ctx.fillStyle = isPlayer ? '#00FF66' : '#FF3344';
+        ctx.fillStyle = isPlayer ? '#00FF66' : (isInBlind ? '#FFFF00' : '#FF3344');
         ctx.fillRect(-20, -36, (Math.max(0, hp) / maxHp) * 40, 5);
         
         if (enemyShield > 0) {
@@ -1218,20 +1216,30 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
     let mainColor = '#FF3344';
     if (isPlayer) {
         mainColor = '#00FF66';
+    } else if (isInBlind) {
+        // 盲区内敌人高亮（荧光黄/绿色轮廓）
+        mainColor = '#FFFF00';
     } else if (isObserver) {
         mainColor = alert ? '#FF3344' : '#00CCFF';
     } else if (hitFlash) {
         mainColor = '#FFFFFF';
     }
 
-    const darkColor = isPlayer ? '#0D1A12' : (isObserver ? '#051A24' : '#220D0F');
+    const darkColor = isPlayer ? '#0D1A12' : (isInBlind ? '#2B2B05' : (isObserver ? '#051A24' : '#220D0F'));
     const legOffset = Math.sin(walkCycle) * 6;
     ctx.fillStyle = '#050A07';
     ctx.fillRect(-8, -12 + legOffset, 8, 5); ctx.fillRect(-8, 7 - legOffset, 8, 5);
 
     ctx.fillStyle = '#0A120E'; ctx.fillRect(-15, -9, 6, 18);
-    ctx.fillStyle = darkColor; ctx.strokeStyle = mainColor; ctx.lineWidth = 1.8;
+    ctx.fillStyle = darkColor; ctx.strokeStyle = mainColor; ctx.lineWidth = isInBlind ? 2.5 : 1.8;
     ctx.beginPath(); ctx.roundRect(-10, -11, 16, 22, 4); ctx.fill(); ctx.stroke();
+
+    if (isInBlind && hp > 0) {
+        // 给盲区内的敌人加上战术扫描环
+        ctx.strokeStyle = '#00FF66'; ctx.lineWidth = 1.5; ctx.shadowColor = '#00FF66'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
 
     if (isObserver && enemyShield > 0) {
         ctx.strokeStyle = '#00CCFF'; ctx.lineWidth = 2; ctx.shadowColor = '#00CCFF'; ctx.shadowBlur = 8;
@@ -1261,14 +1269,17 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
 
     ctx.restore();
 
-    if (!isPlayer && isObserver && hp > 0) {
+    if (isInBlind && hp > 0) {
+        ctx.fillStyle = '#00FF66'; ctx.font = 'bold 9px monospace';
+        ctx.fillText("[IN BLIND ZONE]", x - 35, y - 46);
+    } else if (!isPlayer && isObserver && hp > 0) {
         ctx.fillStyle = alert ? '#FF3344' : '#00CCFF'; ctx.font = 'bold 9px monospace';
         ctx.fillText("[OBSERVER]", x - 26, y - 46);
     }
 
     if (!isPlayer && pendingDamage > 0 && hp > 0) {
         ctx.fillStyle = '#00FF66'; ctx.font = 'bold 10px monospace';
-        ctx.fillText(`[DEBT: ${pendingDamage}]`, x - 26, y - (isObserver ? 56 : 46));
+        ctx.fillText(`[DEBT: ${pendingDamage}]`, x - 26, y - (isInBlind ? 58 : 46));
     }
 }
 
@@ -1301,9 +1312,10 @@ function draw() {
     cameras.forEach(drawCamera);
     drawDropItems();
     
+    // 渲染盲区阴影（调亮半透明度，由原先 0.88 降低至 0.55）
     if (blindActive && blindZone) {
         ctx.save();
-        ctx.fillStyle = 'rgba(4, 14, 9, 0.88)';
+        ctx.fillStyle = 'rgba(4, 14, 9, 0.55)';
         ctx.beginPath(); ctx.arc(blindZone.x, blindZone.y, blindZone.radius, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#00FF66'; ctx.setLineDash([8, 6]); ctx.lineWidth = 2; ctx.stroke();
         ctx.restore();
