@@ -822,35 +822,61 @@ function drawProps() {
     props.forEach(p => {
         ctx.save();
         if (p.type === 'desk') {
-            ctx.fillStyle = 'rgba(0, 255, 102, 0.05)';
-            ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
-            ctx.lineWidth = 1.5;
+            // 落地阴影
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+            ctx.fillRect(p.x + 3, p.y + 3, p.w, p.h);
+
+            // 桌面主色与高光描边
+            ctx.fillStyle = '#1e293b';
             ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.strokeStyle = '#00FF66';
+            ctx.lineWidth = 1.2;
             ctx.strokeRect(p.x, p.y, p.w, p.h);
-            ctx.fillStyle = 'rgba(0, 255, 102, 0.3)';
+
+            // 桌面设备细节
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(p.x + p.w * 0.2, p.y + 2, p.w * 0.6, 3);
+
+            ctx.fillStyle = 'rgba(0, 255, 102, 0.7)';
             ctx.font = '9px monospace';
-            ctx.fillText(p.label || "DESK", p.x + 6, p.y + 15);
+            ctx.fillText(p.label || "DESK", p.x + 6, p.y + p.h - 4);
+
         } else if (p.type === 'chair_group') {
-            ctx.strokeStyle = 'rgba(0, 255, 102, 0.3)';
+            ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
             ctx.lineWidth = 1;
             for(let i = 0; i < 4; i++) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.fillRect(p.x + i * 22, p.y, 16, 16);
                 ctx.strokeRect(p.x + i * 22, p.y, 16, 16);
                 ctx.strokeRect(p.x + i * 22 + 3, p.y + 3, 10, 10);
             }
+
         } else if (p.type === 'conveyor') {
-            ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
-            ctx.strokeStyle = 'rgba(0, 204, 255, 0.5)';
-            ctx.lineWidth = 1.5;
+            // 传送带阴影与衬底
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.fillRect(p.x + 3, p.y + 3, p.w, p.h);
+            ctx.fillStyle = '#0f172a';
             ctx.fillRect(p.x, p.y, p.w, p.h);
-            ctx.strokeRect(p.x, p.y, p.w, p.h);
-            ctx.strokeStyle = 'rgba(0, 204, 255, 0.25)';
-            for(let x = p.x + 10; x < p.x + p.w; x += 15) {
-                ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x - 5, p.y + p.h); ctx.stroke();
+
+            // 斜向履带条纹
+            ctx.strokeStyle = 'rgba(0, 204, 255, 0.35)';
+            ctx.lineWidth = 1.5;
+            for(let x = p.x + 8; x < p.x + p.w; x += 12) {
+                ctx.beginPath();
+                ctx.moveTo(x, p.y);
+                ctx.lineTo(x - 5, p.y + p.h);
+                ctx.stroke();
             }
+
+            // 边框与标签
+            ctx.strokeStyle = '#00CCFF';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
+
             if (p.label) {
-                ctx.fillStyle = 'rgba(0, 204, 255, 0.5)';
+                ctx.fillStyle = '#00CCFF';
                 ctx.font = '9px monospace';
-                ctx.fillText(p.label, p.x + 6, p.y + 15);
+                ctx.fillText(p.label, p.x + 6, p.y + 14);
             }
         }
         ctx.restore();
@@ -859,29 +885,59 @@ function drawProps() {
 
 function drawObstacle(obs) {
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(obs.x + 4, obs.y + 4, obs.w, obs.h);
 
     if (obs.type === 'solid') {
-        ctx.fillStyle = '#08140E';
+        // 实体墙：阴影 + 渐变墙体
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(obs.x + 4, obs.y + 4, obs.w, obs.h);
+
+        let grad = ctx.createLinearGradient(obs.x, obs.y, obs.x, obs.y + obs.h);
+        grad.addColorStop(0, '#0d2218');
+        grad.addColorStop(1, '#040d08');
+        ctx.fillStyle = grad;
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-        ctx.strokeStyle = '#00FF66';
+
+        // 墙面混凝土网格纹理
+        ctx.strokeStyle = 'rgba(0, 255, 102, 0.08)';
+        ctx.lineWidth = 1;
+        const tileSize = 16;
+        for (let x = obs.x; x < obs.x + obs.w; x += tileSize) {
+            for (let y = obs.y; y < obs.y + obs.h; y += tileSize) {
+                ctx.strokeRect(x, y, Math.min(tileSize, obs.x + obs.w - x), Math.min(tileSize, obs.y + obs.h - y));
+            }
+        }
+
+        // 高光描边
+        ctx.strokeStyle = 'rgba(0, 255, 102, 0.8)';
         ctx.lineWidth = 1.8;
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+
     } else if (obs.type === 'glass') {
-        ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
+        // 玻璃墙：半透明底色 + 虚线框 + 四角加固件
+        ctx.fillStyle = 'rgba(0, 204, 255, 0.1)';
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+
         ctx.strokeStyle = 'rgba(0, 204, 255, 0.8)';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([6, 3]);
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
         ctx.setLineDash([]);
+
         ctx.fillStyle = '#00CCFF';
-        ctx.fillRect(obs.x - 2, obs.y - 2, 5, 5);
-        ctx.fillRect(obs.x + obs.w - 3, obs.y + obs.h - 3, 5, 5);
+        const cs = 4;
+        ctx.fillRect(obs.x - 1, obs.y - 1, cs, cs);
+        ctx.fillRect(obs.x + obs.w - cs + 1, obs.y - 1, cs, cs);
+        ctx.fillRect(obs.x - 1, obs.y + obs.h - cs + 1, cs, cs);
+        ctx.fillRect(obs.x + obs.w - cs + 1, obs.y + obs.h - cs + 1, cs, cs);
+
     } else if (obs.type === 'low_wall') {
+        // 低墙：警戒黄线条纹
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillRect(obs.x + 3, obs.y + 3, obs.w, obs.h);
+
         ctx.fillStyle = 'rgba(255, 153, 0, 0.18)';
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+
         ctx.strokeStyle = '#FF9900';
         ctx.lineWidth = 1.8;
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
@@ -892,6 +948,7 @@ function drawObstacle(obs) {
         ctx.font = '9px monospace';
         ctx.fillText(obs.label, obs.x + 4, obs.y - 5);
     }
+
     ctx.restore();
 }
 
