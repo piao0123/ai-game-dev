@@ -818,80 +818,181 @@ function drawZones() {
     });
 }
 
-function drawProps() {
+function drawProps(ctx, props) {
+    if (!props) return;
+
     props.forEach(p => {
         ctx.save();
+
         if (p.type === 'desk') {
-            ctx.fillStyle = 'rgba(0, 255, 102, 0.05)';
-            ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
-            ctx.lineWidth = 1.5;
+            // 办公桌：木质/现代办公桌
+            // 1. 桌下阴影
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+            ctx.fillRect(p.x + 3, p.y + 3, p.w, p.h);
+
+            // 2. 桌面主体（棕色木质/灰白现代风格）
+            ctx.fillStyle = '#334155';
             ctx.fillRect(p.x, p.y, p.w, p.h);
-            ctx.strokeRect(p.x, p.y, p.w, p.h);
-            ctx.fillStyle = 'rgba(0, 255, 102, 0.3)';
-            ctx.font = '9px monospace';
-            ctx.fillText(p.label || "DESK", p.x + 6, p.y + 15);
-        } else if (p.type === 'chair_group') {
-            ctx.strokeStyle = 'rgba(0, 255, 102, 0.3)';
-            ctx.lineWidth = 1;
-            for(let i = 0; i < 4; i++) {
-                ctx.strokeRect(p.x + i * 22, p.y, 16, 16);
-                ctx.strokeRect(p.x + i * 22 + 3, p.y + 3, 10, 10);
-            }
-        } else if (p.type === 'conveyor') {
-            ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
-            ctx.strokeStyle = 'rgba(0, 204, 255, 0.5)';
-            ctx.lineWidth = 1.5;
-            ctx.fillRect(p.x, p.y, p.w, p.h);
-            ctx.strokeRect(p.x, p.y, p.w, p.h);
-            ctx.strokeStyle = 'rgba(0, 204, 255, 0.25)';
-            for(let x = p.x + 10; x < p.x + p.w; x += 15) {
-                ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x - 5, p.y + p.h); ctx.stroke();
-            }
+
+            // 3. 桌面内嵌封边与光泽
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(p.x + 1, p.y + 1, p.w - 2, p.h - 2);
+
+            // 4. 桌面小细节（比如显示器/文档/键盘挡板标识）
+            ctx.fillStyle = '#0f172a';
+            // 模拟显示器/笔记本
+            ctx.fillRect(p.x + p.w * 0.3, p.y + 3, p.w * 0.4, 4);
+            // 模拟文件夹/鼠标垫
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(p.x + 5, p.y + p.h - 8, 8, 5);
+
+            // 文字标识（可选）
             if (p.label) {
-                ctx.fillStyle = 'rgba(0, 204, 255, 0.5)';
-                ctx.font = '9px monospace';
-                ctx.fillText(p.label, p.x + 6, p.y + 15);
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(p.label, p.x + p.w / 2, p.y + p.h / 2 + 2);
             }
+
+        } else if (p.type === 'conveyor') {
+            // 工业传送带
+            // 1. 金属底座框架
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+
+            // 2. 履带主干（深灰）
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(p.x + 2, p.y + 2, p.w - 4, p.h - 4);
+
+            // 3. 履带防滑斜纹
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 2;
+            const gap = 12;
+            for (let i = -p.h; i < p.w; i += gap) {
+                ctx.beginPath();
+                ctx.moveTo(Math.max(p.x, p.x + i), Math.min(p.y + p.h, p.y + p.h - i));
+                ctx.lineTo(Math.min(p.x + p.w, p.x + i + p.h), Math.max(p.y, p.y - i));
+                ctx.stroke();
+            }
+
+            // 4. 两侧工业黄/黑边框包边
+            ctx.strokeStyle = '#eab308';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
         }
+
         ctx.restore();
     });
 }
 
-function drawObstacle(obs) {
+function drawObstacle(ctx, obs) {
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(obs.x + 4, obs.y + 4, obs.w, obs.h);
 
     if (obs.type === 'solid') {
-        ctx.fillStyle = '#08140E';
+        // 1. 落地绘制阴影（向右下偏移，增强立柱/墙体高度感）
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        ctx.fillRect(obs.x + 4, obs.y + 4, obs.w, obs.h);
+
+        // 2. 墙体主渐变（模拟顶部光照效果）
+        let grad = ctx.createLinearGradient(obs.x, obs.y, obs.x, obs.y + obs.h);
+        grad.addColorStop(0, '#4a5568');   // 顶部较浅
+        grad.addColorStop(1, '#1a202c');   // 底部暗色
+        ctx.fillStyle = grad;
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-        ctx.strokeStyle = '#00FF66';
-        ctx.lineWidth = 1.8;
+
+        // 3. 混凝土/砖块微纹理
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.lineWidth = 1;
+        const tileSize = 16;
+        for (let x = obs.x; x < obs.x + obs.w; x += tileSize) {
+            for (let y = obs.y; y < obs.y + obs.h; y += tileSize) {
+                ctx.strokeRect(x, y, Math.min(tileSize, obs.x + obs.w - x), Math.min(tileSize, obs.y + obs.h - y));
+            }
+        }
+
+        // 4. 顶部高光边（增强立体边缘）
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(obs.x, obs.y + obs.h);
+        ctx.lineTo(obs.x, obs.y);
+        ctx.lineTo(obs.x + obs.w, obs.y);
+        ctx.stroke();
+
+        // 5. 外包边
+        ctx.strokeStyle = '#2d3748';
+        ctx.lineWidth = 2;
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+
     } else if (obs.type === 'glass') {
-        ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
+        // 1. 半透明蓝灰玻璃底色
+        ctx.fillStyle = 'rgba(100, 200, 255, 0.12)';
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-        ctx.strokeStyle = 'rgba(0, 204, 255, 0.8)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([6, 3]);
+
+        // 2. 斜向高光反光条纹（玻璃质感核心）
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(obs.x, obs.y, obs.w, obs.h);
+        ctx.clip(); // 限制反光在玻璃范围内
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 3;
+        for (let i = -obs.h; i < obs.w; i += 24) {
+            ctx.beginPath();
+            ctx.moveTo(obs.x + i, obs.y);
+            ctx.lineTo(obs.x + i + 20, obs.y + obs.h);
+            ctx.stroke();
+        }
+        ctx.restore();
+
+        // 3. 金属固定边框
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+        ctx.lineWidth = 2;
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#00CCFF';
-        ctx.fillRect(obs.x - 2, obs.y - 2, 5, 5);
-        ctx.fillRect(obs.x + obs.w - 3, obs.y + obs.h - 3, 5, 5);
+
+        // 4. 四角加固小角码
+        ctx.fillStyle = '#38bdf8';
+        const cs = 4; // 角码大小
+        ctx.fillRect(obs.x, obs.y, cs, cs);
+        ctx.fillRect(obs.x + obs.w - cs, obs.y, cs, cs);
+        ctx.fillRect(obs.x, obs.y + obs.h - cs, cs, cs);
+        ctx.fillRect(obs.x + obs.w - cs, obs.y + obs.h - cs, cs, cs);
+
     } else if (obs.type === 'low_wall') {
-        ctx.fillStyle = 'rgba(255, 153, 0, 0.18)';
+        // 低矮墙：掩体防撞墩样式（橙黑黄相间条纹 + 厚重感）
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+        ctx.fillRect(obs.x + 3, obs.y + 3, obs.w, obs.h);
+
+        // 基础底色
+        ctx.fillStyle = '#d97706';
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-        ctx.strokeStyle = '#FF9900';
-        ctx.lineWidth = 1.8;
+
+        // 黄黑斜向警示条纹
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(obs.x, obs.y, obs.w, obs.h);
+        ctx.clip();
+        
+        ctx.fillStyle = '#1e293b';
+        const stripeW = 10;
+        for (let x = obs.x - obs.h; x < obs.x + obs.w; x += stripeW * 2) {
+            ctx.beginPath();
+            ctx.moveTo(x, obs.y + obs.h);
+            ctx.lineTo(x + stripeW, obs.y + obs.h);
+            ctx.lineTo(x + stripeW + obs.h, obs.y);
+            ctx.lineTo(x + obs.h, obs.y);
+            ctx.fill();
+        }
+        ctx.restore();
+
+        // 顶部防护板边缘
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
     }
 
-    if (obs.label) {
-        ctx.fillStyle = obs.type === 'glass' ? '#00CCFF' : '#FF9900';
-        ctx.font = '9px monospace';
-        ctx.fillText(obs.label, obs.x + 4, obs.y - 5);
-    }
     ctx.restore();
 }
 
