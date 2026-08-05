@@ -1150,9 +1150,23 @@ function draw() {
     enemies.forEach(e => {
     if (e.hp <= 0 && e.deathAlpha <= 0) return;
 
-    // 【新增核心逻辑】：只有在主角视野内（且没被墙挡住），或者在盲区激活时，才绘制敌人
-    if (isInFOV(e) || inBlindZone(e.x, e.y)) {
-        if (e.hp > 0 && (!inBlindZone(e.x, e.y) || e.isObserver) && e.confusedTimer <= 0) {
+    // 1. 玩家视角与射线遮挡计算
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    let angleDiff = Math.atan2(dy, dx) - player.angle;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+
+    // 2. 判断敌人是否在玩家视角扇形内且无障碍物遮挡
+    const inSight = dist <= player.viewDistance && Math.abs(angleDiff) <= player.fov / 2 && canSee(player.x, player.y, e.x, e.y);
+
+    // 3. 判断敌人是否处于警戒或开火状态（发现玩家/向玩家射击）
+    const isAttackingOrAlert = e.alert || e.state === 'attack' || e.state === 'shoot' || e.shootTimer > 0;
+
+    // 条件：只有在【玩家视野内】或者【敌人主动警戒/攻击】时，才渲染该敌人
+    if (inSight || isAttackingOrAlert) {
+        if (e.hp > 0 && e.confusedTimer <= 0) {
             let fovFill = e.alert ? 'rgba(255, 51, 51, 0.15)' : (e.isObserver ? 'rgba(0, 204, 255, 0.12)' : 'rgba(255, 200, 0, 0.08)');
             let fovStroke = e.alert ? 'rgba(255, 51, 51, 0.4)' : null;
             drawTacticalFOV(e.x, e.y, e.angle, Math.PI / 3, 260, fovFill, fovStroke);
