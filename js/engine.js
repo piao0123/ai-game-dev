@@ -821,67 +821,36 @@ function drawZones() {
 function drawProps() {
     props.forEach(p => {
         ctx.save();
-
         if (p.type === 'desk') {
-            // 办公桌：影子 + 桌面 + 双色边框 + 桌面物品/标识
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-            ctx.fillRect(p.x + 3, p.y + 3, p.w, p.h);
-
-            // 桌面主色
-            ctx.fillStyle = '#1e293b';
-            ctx.fillRect(p.x, p.y, p.w, p.h);
-
-            // 桌面边框与高光
-            ctx.strokeStyle = '#00FF66';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(p.x, p.y, p.w, p.h);
-
-            // 桌面微小道具（笔记本/文件盒）
-            ctx.fillStyle = '#0f172a';
-            ctx.fillRect(p.x + p.w * 0.2, p.y + 2, p.w * 0.6, 3);
-
-            if (p.label) {
-                ctx.fillStyle = 'rgba(0, 255, 102, 0.6)';
-                ctx.font = '9px monospace';
-                ctx.fillText(p.label, p.x + 6, p.y + p.h - 4);
-            }
-
-        } else if (p.type === 'chair_group') {
+            ctx.fillStyle = 'rgba(0, 255, 102, 0.05)';
             ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
+            ctx.fillStyle = 'rgba(0, 255, 102, 0.3)';
+            ctx.font = '9px monospace';
+            ctx.fillText(p.label || "DESK", p.x + 6, p.y + 15);
+        } else if (p.type === 'chair_group') {
+            ctx.strokeStyle = 'rgba(0, 255, 102, 0.3)';
             ctx.lineWidth = 1;
             for(let i = 0; i < 4; i++) {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-                ctx.fillRect(p.x + i * 22, p.y, 16, 16);
                 ctx.strokeRect(p.x + i * 22, p.y, 16, 16);
                 ctx.strokeRect(p.x + i * 22 + 3, p.y + 3, 10, 10);
             }
-
         } else if (p.type === 'conveyor') {
-            // 工业传送带：落地阴影 + 斜纹 + 金属边框
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.fillRect(p.x + 3, p.y + 3, p.w, p.h);
-
-            ctx.fillStyle = '#0f172a';
+            ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
+            ctx.strokeStyle = 'rgba(0, 204, 255, 0.5)';
+            ctx.lineWidth = 1.5;
             ctx.fillRect(p.x, p.y, p.w, p.h);
-
-            // 履带斜纹
-            ctx.strokeStyle = 'rgba(0, 204, 255, 0.35)';
-            ctx.lineWidth = 1.5;
-            for(let x = p.x + 8; x < p.x + p.w; x += 12) {
-                ctx.beginPath();
-                ctx.moveTo(x, p.y);
-                ctx.lineTo(x - 6, p.y + p.h);
-                ctx.stroke();
-            }
-
-            ctx.strokeStyle = '#00CCFF';
-            ctx.lineWidth = 1.5;
             ctx.strokeRect(p.x, p.y, p.w, p.h);
-
+            ctx.strokeStyle = 'rgba(0, 204, 255, 0.25)';
+            for(let x = p.x + 10; x < p.x + p.w; x += 15) {
+                ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x - 5, p.y + p.h); ctx.stroke();
+            }
             if (p.label) {
-                ctx.fillStyle = '#00CCFF';
+                ctx.fillStyle = 'rgba(0, 204, 255, 0.5)';
                 ctx.font = '9px monospace';
-                ctx.fillText(p.label, p.x + 6, p.y + 14);
+                ctx.fillText(p.label, p.x + 6, p.y + 15);
             }
         }
         ctx.restore();
@@ -890,107 +859,39 @@ function drawProps() {
 
 function drawObstacle(obs) {
     ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(obs.x + 4, obs.y + 4, obs.w, obs.h);
 
     if (obs.type === 'solid') {
-        // 1. 实体墙：阴影
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(obs.x + 4, obs.y + 4, obs.w, obs.h);
-
-        // 2. 渐变墙体（暗色科幻风格）
-        let grad = ctx.createLinearGradient(obs.x, obs.y, obs.x, obs.y + obs.h);
-        grad.addColorStop(0, '#0d2218');
-        grad.addColorStop(1, '#040d08');
-        ctx.fillStyle = grad;
+        ctx.fillStyle = '#08140E';
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-
-        // 3. 墙体混凝土/砖块网格细纹
-        ctx.strokeStyle = 'rgba(0, 255, 102, 0.08)';
-        ctx.lineWidth = 1;
-        const tileSize = 16;
-        for (let x = obs.x; x < obs.x + obs.w; x += tileSize) {
-            for (let y = obs.y; y < obs.y + obs.h; y += tileSize) {
-                ctx.strokeRect(x, y, Math.min(tileSize, obs.x + obs.w - x), Math.min(tileSize, obs.y + obs.h - y));
-            }
-        }
-
-        // 4. 顶部高光边线
-        ctx.strokeStyle = 'rgba(0, 255, 102, 0.8)';
+        ctx.strokeStyle = '#00FF66';
         ctx.lineWidth = 1.8;
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-
     } else if (obs.type === 'glass') {
-        // 1. 玻璃墙：半透明底色
-        ctx.fillStyle = 'rgba(0, 204, 255, 0.1)';
+        ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-
-        // 2. 玻璃斜向发光反光条纹
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(obs.x, obs.y, obs.w, obs.h);
-        ctx.clip();
-
-        ctx.strokeStyle = 'rgba(0, 204, 255, 0.35)';
-        ctx.lineWidth = 2;
-        for (let i = -obs.h; i < obs.w; i += 20) {
-            ctx.beginPath();
-            ctx.moveTo(obs.x + i, obs.y);
-            ctx.lineTo(obs.x + i + 15, obs.y + obs.h);
-            ctx.stroke();
-        }
-        ctx.restore();
-
-        // 3. 外框线与四角加固连接件
         ctx.strokeStyle = 'rgba(0, 204, 255, 0.8)';
         ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 3]);
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-
+        ctx.setLineDash([]);
         ctx.fillStyle = '#00CCFF';
-        const cs = 4;
-        ctx.fillRect(obs.x - 1, obs.y - 1, cs, cs);
-        ctx.fillRect(obs.x + obs.w - cs + 1, obs.y - 1, cs, cs);
-        ctx.fillRect(obs.x - 1, obs.y + obs.h - cs + 1, cs, cs);
-        ctx.fillRect(obs.x + obs.w - cs + 1, obs.y + obs.h - cs + 1, cs, cs);
-
+        ctx.fillRect(obs.x - 2, obs.y - 2, 5, 5);
+        ctx.fillRect(obs.x + obs.w - 3, obs.y + obs.h - 3, 5, 5);
     } else if (obs.type === 'low_wall') {
-        // 1. 低矮墙：阴影
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-        ctx.fillRect(obs.x + 3, obs.y + 3, obs.w, obs.h);
-
-        // 2. 底色
-        ctx.fillStyle = '#3a2503';
+        ctx.fillStyle = 'rgba(255, 153, 0, 0.18)';
         ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-
-        // 3. 黑黄警戒斜纹
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(obs.x, obs.y, obs.w, obs.h);
-        ctx.clip();
-
-        ctx.fillStyle = '#FF9900';
-        const stripeW = 8;
-        for (let x = obs.x - obs.h; x < obs.x + obs.w; x += stripeW * 2) {
-            ctx.beginPath();
-            ctx.moveTo(x, obs.y + obs.h);
-            ctx.lineTo(x + stripeW, obs.y + obs.h);
-            ctx.lineTo(x + stripeW + obs.h, obs.y);
-            ctx.lineTo(x + obs.h, obs.y);
-            ctx.fill();
-        }
-        ctx.restore();
-
-        // 4. 外包边
         ctx.strokeStyle = '#FF9900';
         ctx.lineWidth = 1.8;
         ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
     }
 
-    // 绘制标签文本
     if (obs.label) {
         ctx.fillStyle = obs.type === 'glass' ? '#00CCFF' : '#FF9900';
         ctx.font = '9px monospace';
         ctx.fillText(obs.label, obs.x + 4, obs.y - 5);
     }
-
     ctx.restore();
 }
 
