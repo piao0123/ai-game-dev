@@ -1192,7 +1192,7 @@ function drawDropItems() {
     });
 }
 
-// 优化敌人绘制：高亮盲区内的敌人
+// 敌人渲染（盲区内高亮轮廓，敌人仅微幅降低亮度，在黑底上极清晰）
 function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendingDamage, alpha = 1.0, isObserver = false, enemyShield = 0, maxShield = 80, alert = false) {
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -1217,7 +1217,7 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
     if (isPlayer) {
         mainColor = '#00FF66';
     } else if (isInBlind) {
-        // 盲区内敌人高亮（荧光黄/绿色轮廓）
+        // 盲区内敌人高亮：极清晰荧光黄
         mainColor = '#FFFF00';
     } else if (isObserver) {
         mainColor = alert ? '#FF3344' : '#00CCFF';
@@ -1225,18 +1225,19 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
         mainColor = '#FFFFFF';
     }
 
-    const darkColor = isPlayer ? '#0D1A12' : (isInBlind ? '#2B2B05' : (isObserver ? '#051A24' : '#220D0F'));
+    // 盲区内敌人主体仅做 0.85 极微幅调暗，保证在黑色遮挡幕布上醒目可观
+    const darkColor = isPlayer ? '#0D1A12' : (isInBlind ? '#332E0A' : (isObserver ? '#051A24' : '#220D0F'));
     const legOffset = Math.sin(walkCycle) * 6;
     ctx.fillStyle = '#050A07';
     ctx.fillRect(-8, -12 + legOffset, 8, 5); ctx.fillRect(-8, 7 - legOffset, 8, 5);
 
     ctx.fillStyle = '#0A120E'; ctx.fillRect(-15, -9, 6, 18);
-    ctx.fillStyle = darkColor; ctx.strokeStyle = mainColor; ctx.lineWidth = isInBlind ? 2.5 : 1.8;
+    ctx.fillStyle = darkColor; ctx.strokeStyle = mainColor; ctx.lineWidth = isInBlind ? 2.8 : 1.8;
     ctx.beginPath(); ctx.roundRect(-10, -11, 16, 22, 4); ctx.fill(); ctx.stroke();
 
     if (isInBlind && hp > 0) {
-        // 给盲区内的敌人加上战术扫描环
-        ctx.strokeStyle = '#00FF66'; ctx.lineWidth = 1.5; ctx.shadowColor = '#00FF66'; ctx.shadowBlur = 10;
+        // 盲区敌人加荧光外发光指示光圈
+        ctx.strokeStyle = '#FFFF00'; ctx.lineWidth = 2; ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.stroke();
         ctx.shadowBlur = 0;
     }
@@ -1270,7 +1271,7 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
     ctx.restore();
 
     if (isInBlind && hp > 0) {
-        ctx.fillStyle = '#00FF66'; ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = '#FFFF00'; ctx.font = 'bold 10px monospace';
         ctx.fillText("[IN BLIND ZONE]", x - 35, y - 46);
     } else if (!isPlayer && isObserver && hp > 0) {
         ctx.fillStyle = alert ? '#FF3344' : '#00CCFF'; ctx.font = 'bold 9px monospace';
@@ -1299,6 +1300,16 @@ function draw() {
         drawTacticalFOV(player.x, player.y, player.angle, player.fov, player.viewDistance, 'rgba(0, 255, 102, 0.12)', 'rgba(0, 255, 102, 0.4)');
     }
 
+    // 盲区视角阴影遮罩（保持黑底遮挡感，透明度 0.92）
+    if (blindActive && blindZone) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(4, 14, 9, 0.92)';
+        ctx.beginPath(); ctx.arc(blindZone.x, blindZone.y, blindZone.radius, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#00FF66'; ctx.setLineDash([8, 6]); ctx.lineWidth = 2; ctx.stroke();
+        ctx.restore();
+    }
+
+    // 在黑底盲区上方渲染敌人（确保敌人图层在盲区黑底之上，高亮不被遮挡）
     enemies.forEach(e => {
         if (e.hp <= 0 && e.deathAlpha <= 0) return;
         if (e.hp > 0 && (!inBlindZone(e.x, e.y) || e.isObserver) && e.confusedTimer <= 0) {
@@ -1311,15 +1322,6 @@ function draw() {
 
     cameras.forEach(drawCamera);
     drawDropItems();
-    
-    // 渲染盲区阴影（调亮半透明度，由原先 0.88 降低至 0.55）
-    if (blindActive && blindZone) {
-        ctx.save();
-        ctx.fillStyle = 'rgba(4, 14, 9, 0.55)';
-        ctx.beginPath(); ctx.arc(blindZone.x, blindZone.y, blindZone.radius, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = '#00FF66'; ctx.setLineDash([8, 6]); ctx.lineWidth = 2; ctx.stroke();
-        ctx.restore();
-    }
     
     if (player.hp > 0) {
         ctx.save();
