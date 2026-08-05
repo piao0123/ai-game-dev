@@ -1,313 +1,1187 @@
-/**
- * 游戏主引擎 (engine.js)
- * 职责：负责 GameLoop 循环、Canvas 渲染、键盘与鼠标事件监听、FOV视野遮罩、状态更新
- */
-
-// --- 基础配置与画布初始化 ---
-const canvas = document.getElementById('gameCanvas');
+const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-function resizeCanvas() {
-    canvas.width = canvas.parentElement.clientWidth;
-    canvas.height = canvas.parentElement.clientHeight;
+let width = window.innerWidth;
+let height = window.innerHeight;
+
+// --- 武器系统 ---
+const WEAPONS = {
+    RIFLE:   { id: 1, name: "RIFLE",   range: 600, cooldown: 12, damage: 35, speed: 16, radius: 3.5, type: 'bullet' },
+    PISTOL:  { id: 2, name: "PISTOL",  range: 350, cooldown: 18, damage: 50, speed: 14, radius: 4.0, type: 'bullet' },
+    SNIPER:  { id: 3, name: "SNIPER",  range: 1100,cooldown: 55, damage: 130,speed: 26, radius: 3.0, type: 'bullet' },
+    SMG:     { id: 4, name: "SMG",     range: 320, cooldown: 5,  damage: 20, speed: 17, radius: 2.8, type: 'bullet' },
+    GRENADE: { id: 5, name: "GRENADE", range: 380, cooldown: 75, damage: 120,speed: 9,  radius: 6.0, type: 'grenade', blastRadius: 110 }
+};
+
+let currentWeapon = WEAPONS.RIFLE;
+let unlockedWeapons = [WEAPONS.RIFLE.id];
+
+let shootCooldownTimer = 0;
+
+let wave = 1;
+let killCount = 0;
+let isGameOver = false;
+let waveTransitionTimer = 0;
+let gateAlarmCooldown = 0;
+
+const player = { 
+    x: 100, y: 350, angle: 0, speed: 3.8, walkCycle: 0, 
+    flashTimer: 0, hp: 100, maxHp: 100,
+    shield: 100, maxShield: 100, shieldActive: false,
+    fov: Math.PI / 2.2, viewDistance: 500
+};
+
+let blindActive = false;
+let blindEnergy = 100;
+const MAX_BLIND_ENERGY = 100;
+const BLIND_CONSUME_RATE = 0.20; 
+const BLIND_RECOVER_RATE = 0.12; 
+let blindZone = null;
+
+const mouse = { x: width / 2, y: height / 2 };
+const keys = {};
+
+const playerBullets = [];
+const grenades = [];
+const enemyBullets = [];
+const particles = [];
+const dropItems = []; 
+
+let obstacles = [];
+let securityGates = [];
+let zones = [];
+let props = [];
+let waypoints = [];
+let cameras = [];
+let enemies = [];
+
+function initMapLayout() {
+    levelManager.loadCurrentLevel();
 }
-resizeCanvas();
+
+function resizeCanvas() {
+    width = window.innerWidth; height = window.innerHeight;
+    canvas.width = width; canvas.height = height;
+    initMapLayout();
+}
 window.addEventListener('resize', resizeCanvas);
 
-// --- 游戏全局状态 ---
-const gameState = {
-    isRunning: true,
-    isPaused: false,
-    score: 0,
-    timeElapsed: 0,
-    alarmTriggered: false
-};
+function getRayIntersection(ray, segment) {
+    const r_px = ray.x, r_py = ray.y, r_dx = ray.dx, r_dy = ray.dy;
+    const s_px = segment.x1, s_py = segment.y1, s_dx = segment.x2 - segment.x1, s_dy = segment.y2 - segment.y1;
 
-// --- 玩家状态 ---
-const player = {
-    x: 100,
-    y: 100,
-    radius: 12,
-    speed: 3,
-    angle: 0,                // 当前朝向角度（弧度）
-    fovAngle: Math.PI / 3,   // 视野角度（60度）
-    fovDistance: 220,        // 视野最远距离（像素）
-    health: 100,
-    maxHealth: 100
-};
+    const r_mag = Math.sqrt(r_dx * r_dx + r_dy * r_dy);
+    const s_mag = Math.sqrt(s_dx * s_dx + s_dy * s_dy);
 
-// --- 按键与鼠标监听 ---
-const keys = {};
-window.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
-window.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+    if (r_dx / r_mag === s_dx / s_mag && r_dy / r_mag === s_dy / s_mag) return null;
 
-let mousePos = { x: 0, y: 0 };
-canvas.addEventListener('mousemove', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    mousePos.x = e.clientX - rect.left;
-    mousePos.y = e.clientY - rect.top;
-});
+    const T2 = (r_dx * (s_py - r_py) + r_dy * (r_px - s_px)) / (s_dx * r_dy - s_dy * r_dx);
+    const T1 = (s_px + s_dx * T2 - r_px) / r_dx;
 
-// --- 日志与UI系统 ---
-function addLog(text, type = 'info') {
-    const logBox = document.getElementById('game-log');
-    if (!logBox) return;
-    const item = document.createElement('div');
-    item.className = `log-item log-${type}`;
-    item.innerText = `[${new Date().toLocaleTimeString()}] ${text}`;
-    logBox.appendChild(item);
-    logBox.scrollTop = logBox.scrollHeight;
+    if (T1 < 0 || T2 < 0 || T2 > 1) return null;
+    return { x: r_px + r_dx * T1, y: r_py + r_dy * T1, param: T1 };
 }
 
-// --- 视野判定逻辑 ---
-/**
- * 检查某个目标（如敌人）是否在主角的视野扇形区域内
- * @param {Object} target 包含 x, y 坐标的目标对象
- * @returns {boolean} 是否在视野内
- */
-function isInFOV(target) {
-    if (!target) return false;
-    const dx = target.x - player.x;
-    const dy = target.y - player.y;
-    const dist = Math.hypot(dx, dy);
-
-    // 1. 如果超出玩家视野最大距离，不可见
-    if (dist > player.fovDistance) return false;
-
-    // 2. 计算目标相对于主角的角度差
-    const targetAngle = Math.atan2(dy, dx);
-    let angleDiff = targetAngle - player.angle;
-
-    // 规范化角度差到 [-PI, PI] 区间
-    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-
-    // 3. 判断夹角绝对值是否在 half-FOV 之内
-    return Math.abs(angleDiff) <= player.fovAngle / 2;
+function getVisionBlockingSegments() {
+    const segments = [];
+    obstacles.forEach(obs => {
+        if (obs.type === 'solid') {
+            segments.push(
+                { x1: obs.x, y1: obs.y, x2: obs.x + obs.w, y2: obs.y },
+                { x1: obs.x + obs.w, y1: obs.y, x2: obs.x + obs.w, y2: obs.y + obs.h },
+                { x1: obs.x + obs.w, y1: obs.y + obs.h, x2: obs.x, y2: obs.y + obs.h },
+                { x1: obs.x, y1: obs.y + obs.h, x2: obs.x, y2: obs.y }
+            );
+        }
+    });
+    return segments;
 }
 
-// --- 碰撞检测逻辑 ---
-function checkObstacleCollision(newX, newY, radius) {
-    if (!window.obstacles) return false;
-    for (let obs of window.obstacles) {
-        if (newX + radius > obs.x &&
-            newX - radius < obs.x + obs.w &&
-            newY + radius > obs.y &&
-            newY - radius < obs.y + obs.h) {
+function drawTacticalFOV(x, y, angle, fovAngle, maxDist, fillColor, strokeColor) {
+    const segments = getVisionBlockingSegments();
+    const rayCount = 100;
+    const startAngle = angle - fovAngle / 2;
+    const step = fovAngle / rayCount;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+
+    for (let i = 0; i <= rayCount; i++) {
+        const a = startAngle + step * i;
+        const ray = { x: x, y: y, dx: Math.cos(a) * maxDist, dy: Math.sin(a) * maxDist };
+
+        let closestHit = null;
+        let minParam = 1;
+
+        segments.forEach(seg => {
+            const hit = getRayIntersection(ray, seg);
+            if (hit && hit.param < minParam) {
+                minParam = hit.param;
+                closestHit = hit;
+            }
+        });
+
+        const targetX = closestHit ? closestHit.x : x + ray.dx;
+        const targetY = closestHit ? closestHit.y : y + ray.dy;
+        ctx.lineTo(targetX, targetY);
+    }
+
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    if (strokeColor) {
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function checkObstacleCollision(x, y, radius) {
+    for (let obs of obstacles) {
+        if (x > obs.x - radius && x < obs.x + obs.w + radius && y > obs.y - radius && y < obs.y + obs.h + radius) {
             return true;
+        }
+    }
+    for (let p of props) {
+        if (p.w && p.h) {
+            if (x > p.x - radius && x < p.x + p.w + radius && y > p.y - radius && y < p.y + p.h + radius) {
+                return true;
+            }
         }
     }
     return false;
 }
 
-// --- 物理与逻辑更新 ---
+function checkLineObstacleIntersection(x1, y1, x2, y2) {
+    for (let obs of obstacles) {
+        if (lineIntersectsRect(x1, y1, x2, y2, obs)) return obs;
+    }
+    return null;
+}
+
+function lineIntersectsRect(x1, y1, x2, y2, rect) {
+    const minX = rect.x, maxX = rect.x + rect.w;
+    const minY = rect.y, maxY = rect.y + rect.h;
+    if ((x1 < minX && x2 < minX) || (x1 > maxX && x2 > maxX)) return false;
+    if ((y1 < minY && y2 < minY) || (y1 > maxY && y2 > maxY)) return false;
+    return true;
+}
+
+function canSee(fromX, fromY, toX, toY) {
+    for (let obs of obstacles) {
+        if (obs.type === 'solid') {
+            if (lineIntersectsRect(fromX, fromY, toX, toY, obs)) return false;
+        }
+    }
+    return true;
+}
+
+function triggerGlobalAlarm() {
+    document.getElementById('alarm-banner').style.display = 'block';
+    enemies.forEach(e => {
+        if (e.hp > 0 && e.spawnGraceTimer <= 0) {
+            e.alert = true;
+            e.alertCooldown = 300; 
+        }
+    });
+}
+
+function spawnWave() {
+    enemies = [];
+    const count = 2 + wave;
+    for (let i = 0; i < count; i++) {
+        let spawnX, spawnY, valid = false, attempts = 0;
+        while (!valid && attempts < 150) {
+            attempts++;
+            spawnX = width * 0.35 + Math.random() * (width * 0.55);
+            spawnY = 80 + Math.random() * (height - 160);
+            if (Math.hypot(spawnX - player.x, spawnY - player.y) > 350 && !checkObstacleCollision(spawnX, spawnY, 20)) {
+                valid = true;
+            }
+        }
+
+        const isShieldObserver = wave >= 2 && (Math.random() < 0.4 || i === 0);
+
+        enemies.push({
+            id: i, x: spawnX, y: spawnY, angle: Math.PI, hp: 100, maxHp: 100,
+            isObserver: isShieldObserver,
+            shield: isShieldObserver ? 80 : 0, maxShield: isShieldObserver ? 80 : 0,
+            alert: false, alertCooldown: 0,
+            pendingDamage: 0,
+            targetWaypoint: waypoints.length > 0 ? Math.floor(Math.random() * waypoints.length) : 0,
+            stuckFrames: 0, 
+            spawnGraceTimer: 100,
+            confusedTimer: 0, confusedAngle: 0,
+            patrolSpeed: 1.0 + Math.random() * 0.3, walkCycle: 0, hitTimer: 0, scanAngle: Math.random() * 6, shootCooldown: 0,
+            deathAlpha: 1.0
+        });
+    }
+    addLog(`WAVE ${wave} INITIATED. ${count} HOSTILES DETECTED.`);
+}
+
+window.addEventListener('keydown', e => { 
+    if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); toggleBlindZone(); }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        e.preventDefault();
+        if (player.shield > 10) player.shieldActive = !player.shieldActive;
+    }
+    if (e.code === 'Digit1' && unlockedWeapons.includes(WEAPONS.RIFLE.id)) switchWeapon(WEAPONS.RIFLE);
+    if (e.code === 'Digit2' && unlockedWeapons.includes(WEAPONS.PISTOL.id)) switchWeapon(WEAPONS.PISTOL);
+    if (e.code === 'Digit3' && unlockedWeapons.includes(WEAPONS.SNIPER.id)) switchWeapon(WEAPONS.SNIPER);
+    if (e.code === 'Digit4' && unlockedWeapons.includes(WEAPONS.SMG.id)) switchWeapon(WEAPONS.SMG);
+    if (e.code === 'Digit5' && unlockedWeapons.includes(WEAPONS.GRENADE.id)) switchWeapon(WEAPONS.GRENADE);
+
+    if (e.code === 'KeyR' || e.key === 'r') { if(isGameOver) resetGame(); }
+    keys[e.code] = true; keys[e.key.toLowerCase()] = true;
+});
+
+window.addEventListener('keyup', e => { keys[e.code] = false; keys[e.key.toLowerCase()] = false; });
+canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mousedown', e => { if (e.button === 0) shoot(); });
+
+function switchWeapon(wp) {
+    currentWeapon = wp;
+    addLog(`EQUIPPED: ${wp.name}`);
+}
+
+function addLog(text) {
+    const log = document.getElementById('log-panel');
+    const line = document.createElement('div');
+    line.innerText = "> " + text;
+    log.appendChild(line);
+    if(log.children.length > 5) log.removeChild(log.children[0]);
+}
+
+function createExplosion(x, y, count = 15, color = null) {
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 4.5;
+        particles.push({
+            x: x, y: y,
+            vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+            life: 25 + Math.random() * 15, maxLife: 40,
+            color: color || (Math.random() > 0.3 ? '#FF3344' : '#00FF66')
+        });
+    }
+}
+
+function spawnDropItem(x, y) {
+    const rand = Math.random();
+    if (rand < 0.7) { 
+        if (rand < 0.25) {
+            dropItems.push({ x, y, type: 'medkit', timer: 700 });
+        } else if (rand < 0.50) {
+            dropItems.push({ x, y, type: 'battery', timer: 700 });
+        } else {
+            const allWps = [WEAPONS.PISTOL, WEAPONS.SNIPER, WEAPONS.SMG, WEAPONS.GRENADE];
+            const lockedWps = allWps.filter(w => !unlockedWeapons.includes(w.id));
+            const wpToDrop = lockedWps.length > 0 ? lockedWps[Math.floor(Math.random() * lockedWps.length)] : allWps[Math.floor(Math.random() * allWps.length)];
+            dropItems.push({ x, y, type: 'weapon', weaponData: wpToDrop, timer: 700 });
+        }
+    }
+}
+
+function toggleBlindZone() {
+    if (player.hp <= 0 || isGameOver) return;
+    if (!blindActive) {
+        if (blindEnergy >= 15) {
+            blindActive = true;
+            blindZone = { x: player.x, y: player.y, radius: 240 };
+            addLog("BLIND ZONE ACTIVATED.");
+        } else {
+            addLog("ENERGY TOO LOW TO ACTIVATE!");
+        }
+    } else {
+        closeBlindZone("MANUAL DEACTIVATION");
+    }
+}
+
+function closeBlindZone(reason = "COLLAPSED") {
+    if (!blindActive) return;
+    blindActive = false;
+    blindZone = null;
+    addLog(`BLIND ZONE DEACTIVATED (${reason}).`);
+    
+    enemies.forEach(e => {
+        if (e.pendingDamage > 0) {
+            applyDamageToEnemy(e, e.pendingDamage);
+            e.pendingDamage = 0; e.alert = true; e.alertCooldown = 300; e.hitTimer = 8;
+            createExplosion(e.x, e.y, 20);
+        }
+    });
+}
+
+function applyDamageToEnemy(enemy, amount) {
+    if (enemy.shield > 0) {
+        if (enemy.shield >= amount) {
+            enemy.shield -= amount;
+            createExplosion(enemy.x, enemy.y, 6, '#00CCFF');
+            return;
+        } else {
+            const overflow = amount - enemy.shield;
+            enemy.shield = 0;
+            enemy.hp -= overflow;
+            createExplosion(enemy.x, enemy.y, 10, '#00CCFF');
+        }
+    } else {
+        enemy.hp -= amount;
+    }
+
+    if (enemy.hp <= 0) {
+        killCount++;
+        createExplosion(enemy.x, enemy.y, 18);
+        spawnDropItem(enemy.x, enemy.y);
+    }
+}
+
+function inBlindZone(x, y) {
+    if (!blindActive || !blindZone) return false;
+    const dx = x - blindZone.x, dy = y - blindZone.y;
+    return (dx*dx + dy*dy) <= blindZone.radius * blindZone.radius;
+}
+
+function shoot() {
+    if (player.hp <= 0 || isGameOver || shootCooldownTimer > 0) return;
+    
+    shootCooldownTimer = currentWeapon.cooldown;
+    player.flashTimer = 3;
+    const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+
+    if (currentWeapon.type === 'grenade') {
+        grenades.push({
+            x: player.x, y: player.y,
+            targetX: mouse.x, targetY: mouse.y,
+            startX: player.x, startY: player.y,
+            vx: Math.cos(angle) * currentWeapon.speed,
+            vy: Math.sin(angle) * currentWeapon.speed,
+            traveled: 0,
+            maxDist: Math.min(currentWeapon.range, Math.hypot(mouse.x - player.x, mouse.y - player.y)),
+            damage: currentWeapon.damage,
+            blastRadius: currentWeapon.blastRadius
+        });
+    } else {
+        playerBullets.push({
+            x: player.x + Math.cos(angle) * 24,
+            y: player.y + Math.sin(angle) * 24,
+            startX: player.x, startY: player.y,
+            vx: Math.cos(angle) * currentWeapon.speed,
+            vy: Math.sin(angle) * currentWeapon.speed,
+            traveled: 0,
+            maxRange: currentWeapon.range,
+            damage: currentWeapon.damage,
+            radius: currentWeapon.radius,
+            penetrations: 1
+        });
+    }
+
+    if (inBlindZone(player.x, player.y)) {
+        enemies.forEach(e => {
+            if (!inBlindZone(e.x, e.y) && !e.alert && Math.hypot(e.x - player.x, e.y - player.y) < 450) {
+                e.confusedTimer = 60;
+            }
+        });
+    }
+}
+
+function triggerGameOver(success) {
+    isGameOver = true;
+    const screen = document.getElementById('game-over-screen');
+    const title = document.getElementById('over-title');
+    const desc = document.getElementById('over-desc');
+    screen.style.display = 'flex';
+    if(success) {
+        title.innerText = "SECTOR CLEARED"; title.style.color = "#00FF66";
+        desc.innerText = `AIRPORT CLEARED. TOTAL KILLS: ${killCount}`;
+    } else {
+        title.innerText = "MISSION FAILED"; title.style.color = "#FF3344";
+        desc.innerText = `OPERATIVE KILLED AT WAVE ${wave}. TOTAL KILLS: ${killCount}`;
+    }
+}
+
+function resetGame() {
+    wave = 1; killCount = 0; isGameOver = false; gateAlarmCooldown = 0;
+    unlockedWeapons = [WEAPONS.RIFLE.id];
+    currentWeapon = WEAPONS.RIFLE;
+    document.getElementById('alarm-banner').style.display = 'none';
+    player.hp = 100; player.shield = 100; player.shieldActive = false;
+    
+    blindActive = false; blindEnergy = MAX_BLIND_ENERGY; blindZone = null;
+    playerBullets.length = 0; grenades.length = 0; enemyBullets.length = 0; particles.length = 0; dropItems.length = 0;
+    document.getElementById('game-over-screen').style.display = 'none';
+
+    initMapLayout();
+    spawnWave();
+}
+
 function update() {
-    if (gameState.isPaused || !gameState.isRunning) return;
+    if (isGameOver) return;
+    if (shootCooldownTimer > 0) shootCooldownTimer--;
+    if (gateAlarmCooldown > 0) gateAlarmCooldown--;
 
-    // 1. 玩家移动计算
-    let moveX = 0;
-    let moveY = 0;
-    if (keys['w'] || keys['arrowup']) moveY -= 1;
-    if (keys['s'] || keys['arrowdown']) moveY += 1;
-    if (keys['a'] || keys['arrowleft']) moveX -= 1;
-    if (keys['d'] || keys['arrowright']) moveX += 1;
-
-    // 归一化移动向量
-    if (moveX !== 0 && moveY !== 0) {
-        moveX *= 0.7071;
-        moveY *= 0.7071;
+    let moveSpeed = player.shieldActive ? player.speed * 0.65 : player.speed;
+    let dx = 0, dy = 0;
+    if (keys['KeyW'] || keys['w'] || keys['ArrowUp']) dy -= 1;
+    if (keys['KeyS'] || keys['s'] || keys['ArrowDown']) dy += 1;
+    if (keys['KeyA'] || keys['a'] || keys['ArrowLeft']) dx -= 1;
+    if (keys['KeyD'] || keys['d'] || keys['ArrowRight']) dx += 1;
+    
+    if (dx !== 0 || dy !== 0) {
+        if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
+        player.walkCycle += 0.22;
+    } else { player.walkCycle = 0; }
+    
+    let nextX = player.x + dx * moveSpeed;
+    let nextY = player.y + dy * moveSpeed;
+    if (!checkObstacleCollision(nextX, nextY, 18)) {
+        player.x = Math.max(20, Math.min(width - 20, nextX));
+        player.y = Math.max(20, Math.min(height - 20, nextY));
     }
+    player.angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    if (player.flashTimer > 0) player.flashTimer--;
 
-    const nextX = player.x + moveX * player.speed;
-    const nextY = player.y + moveY * player.speed;
-
-    // 碰撞检测后再更新坐标
-    if (!checkObstacleCollision(nextX, player.y, player.radius)) {
-        player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, nextX));
-    }
-    if (!checkObstacleCollision(player.x, nextY, player.radius)) {
-        player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, nextY));
-    }
-
-    // 2. 计算玩家面向鼠标的角度
-    player.angle = Math.atan2(mousePos.y - player.y, mousePos.x - player.x);
-
-    // 3. 更新敌人 AI 与状态
-    if (window.enemies) {
-        window.enemies.forEach(enemy => {
-            if (typeof enemy.update === 'function') {
-                enemy.update(player, window.obstacles);
+    if (gateAlarmCooldown <= 0) {
+        securityGates.forEach(gate => {
+            if (player.x > gate.x - 12 && player.x < gate.x + gate.w + 12 &&
+                player.y > gate.y && player.y < gate.y + gate.h) {
+                triggerGlobalAlarm();
+                gateAlarmCooldown = 120;
+                addLog("SECURITY GATE BREACHED! ALARM ACTIVATED!");
+                createExplosion(player.x, player.y, 8, '#FF3344');
             }
         });
     }
 
-    // 4. 更新关卡特定逻辑
-    if (window.levelManager && typeof window.levelManager.update === 'function') {
-        window.levelManager.update();
+    if (player.shieldActive) {
+        player.shield = Math.max(0, player.shield - 0.15);
+        if (player.shield <= 0) player.shieldActive = false;
+    } else {
+        player.shield = Math.min(player.maxShield, player.shield + 0.08);
     }
-}
-
-// --- 渲染绘制子模块 ---
-
-// 绘制地图与静态物体
-function drawEnvironment() {
-    // 绘制地图背景
-    ctx.fillStyle = '#1b1d22';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // 绘制障碍物/墙体
-    if (window.obstacles) {
-        ctx.fillStyle = '#2c303e';
-        ctx.strokeStyle = '#41485c';
-        ctx.lineWidth = 2;
-        window.obstacles.forEach(obs => {
-            ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-            ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-        });
+    
+    if (blindActive) {
+        blindEnergy = Math.max(0, blindEnergy - BLIND_CONSUME_RATE);
+        if (blindEnergy <= 0) closeBlindZone("ENERGY DEPLETED");
+    } else {
+        blindEnergy = Math.min(MAX_BLIND_ENERGY, blindEnergy + BLIND_RECOVER_RATE);
     }
 
-    // 绘制安检门/警报区
-    if (window.securityGates) {
-        window.securityGates.forEach(gate => {
-            ctx.fillStyle = gate.active ? 'rgba(255, 50, 50, 0.25)' : 'rgba(50, 255, 50, 0.15)';
-            ctx.fillRect(gate.x, gate.y, gate.w, gate.h);
-            ctx.strokeStyle = gate.active ? '#ff3232' : '#32ff32';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(gate.x, gate.y, gate.w, gate.h);
-        });
+    for (let i = dropItems.length - 1; i >= 0; i--) {
+        let item = dropItems[i];
+        item.timer--;
+        if (item.timer <= 0) { dropItems.splice(i, 1); continue; }
+        if (Math.hypot(player.x - item.x, player.y - item.y) < 28) {
+            if (item.type === 'medkit') {
+                player.hp = Math.min(player.maxHp, player.hp + 35);
+                addLog("RECOVERED MEDKIT (+35 VITALS)");
+                createExplosion(player.x, player.y, 10, '#00FF66');
+            } else if (item.type === 'battery') {
+                player.shield = Math.min(player.maxShield, player.shield + 50);
+                blindEnergy = Math.min(MAX_BLIND_ENERGY, blindEnergy + 40);
+                addLog("RECOVERED BATTERY (+50 SHIELD / +40 ENERGY)");
+                createExplosion(player.x, player.y, 10, '#00CCFF');
+            } else if (item.type === 'weapon') {
+                const wp = item.weaponData;
+                if (!unlockedWeapons.includes(wp.id)) {
+                    unlockedWeapons.push(wp.id);
+                    addLog(`UNLOCKED NEW WEAPON: [${wp.name}]!`);
+                } else {
+                    addLog(`PICKED UP: [${wp.name}]`);
+                }
+                switchWeapon(wp);
+                createExplosion(player.x, player.y, 12, '#FFFF00');
+            }
+            dropItems.splice(i, 1);
+        }
     }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        p.x += p.vx; p.y += p.vy;
+        p.life--;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+    
+    for (let i = grenades.length - 1; i >= 0; i--) {
+        let g = grenades[i];
+        let nextGPointX = g.x + g.vx;
+        let nextGPointY = g.y + g.vy;
+
+        let hitObs = checkLineObstacleIntersection(g.x, g.y, nextGPointX, nextGPointY);
+        if (hitObs && (hitObs.type === 'solid' || hitObs.type === 'glass')) {
+            g.traveled = g.maxDist;
+        } else {
+            g.x = nextGPointX; g.y = nextGPointY;
+            g.traveled += Math.hypot(g.vx, g.vy);
+        }
+
+        if (g.traveled >= g.maxDist) {
+            createExplosion(g.x, g.y, 35, '#FF5500');
+            enemies.forEach(e => {
+                if (e.hp <= 0) return;
+                const d = Math.hypot(e.x - g.x, e.y - g.y);
+                if (d <= g.blastRadius) {
+                    const dmg = Math.floor(g.damage * (1 - d / g.blastRadius * 0.4));
+                    if (inBlindZone(e.x, e.y)) {
+                        e.pendingDamage += dmg;
+                    } else {
+                        applyDamageToEnemy(e, dmg);
+                        e.alert = true; e.alertCooldown = 300; e.hitTimer = 6;
+                    }
+                }
+            });
+            grenades.splice(i, 1);
+        }
+    }
+
+    for (let i = playerBullets.length - 1; i >= 0; i--) {
+        let b = playerBullets[i];
+        let nextBX = b.x + b.vx;
+        let nextBY = b.y + b.vy;
+
+        let hitObs = checkLineObstacleIntersection(b.x, b.y, nextBX, nextBY);
+        if (hitObs) {
+            if (hitObs.type === 'glass' && b.penetrations > 0) {
+                b.penetrations--;
+                b.damage *= 0.65;
+                createExplosion(nextBX, nextBY, 4, '#00CCFF');
+                b.x = nextBX; b.y = nextBY;
+            } else {
+                playerBullets.splice(i, 1); continue;
+            }
+        } else {
+            b.x = nextBX; b.y = nextBY;
+        }
+
+        b.traveled += Math.hypot(b.vx, b.vy);
+
+        if (b.traveled >= b.maxRange || b.x < 0 || b.x > width || b.y < 0 || b.y > height) {
+            playerBullets.splice(i, 1); continue;
+        }
+        for (let e of enemies) {
+            if (e.hp <= 0) continue;
+            if (Math.hypot(b.x - e.x, b.y - e.y) < 22) {
+                if (inBlindZone(e.x, e.y)) {
+                    e.pendingDamage += b.damage;
+                } else {
+                    applyDamageToEnemy(e, b.damage);
+                    e.hitTimer = 6;
+                    if (inBlindZone(player.x, player.y) && !e.isObserver) {
+                        e.confusedTimer = 80;
+                    } else {
+                        e.alert = true; e.alertCooldown = 300;
+                    }
+                }
+                playerBullets.splice(i, 1); break;
+            }
+        }
+    }
+
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        let eb = enemyBullets[i];
+        let nextEBX = eb.x + eb.vx;
+        let nextEBY = eb.y + eb.vy;
+
+        let hitObs = checkLineObstacleIntersection(eb.x, eb.y, nextEBX, nextEBY);
+        if (hitObs) {
+            if (hitObs.type === 'glass' && eb.penetrations > 0) {
+                eb.penetrations--;
+                eb.x = nextEBX; eb.y = nextEBY;
+            } else {
+                enemyBullets.splice(i, 1); continue;
+            }
+        } else {
+            eb.x = nextEBX; eb.y = nextEBY;
+        }
+
+        if (eb.x < 0 || eb.x > width || eb.y < 0 || eb.y > height) {
+            enemyBullets.splice(i, 1); continue;
+        }
+        if (Math.hypot(eb.x - player.x, eb.y - player.y) < 20) {
+            if (player.shieldActive && player.shield > 0) {
+                player.shield = Math.max(0, player.shield - 15);
+                player.hp = Math.max(0, player.hp - 3);
+                createExplosion(eb.x, eb.y, 6, '#00CCFF');
+            } else {
+                player.hp = Math.max(0, player.hp - 12);
+                createExplosion(eb.x, eb.y, 6, '#FF3344');
+            }
+            enemyBullets.splice(i, 1);
+            if (player.hp <= 0) { triggerGameOver(false); return; }
+        }
+    }
+    
+    let anyCameraDetecting = false;
+    cameras.forEach(cam => {
+        cam.sweepTimer += cam.sweepSpeed;
+        cam.currentAngle = cam.baseAngle + Math.sin(cam.sweepTimer) * cam.sweepRange;
+        
+        let inSight = false;
+        if (!inBlindZone(player.x, player.y) && player.hp > 0) {
+            const pdx = player.x - cam.x;
+            const pdy = player.y - cam.y;
+            const dist = Math.hypot(pdx, pdy);
+            
+            if (dist < 320) {
+                const angleToPlayer = Math.atan2(pdy, pdx);
+                let diff = angleToPlayer - cam.currentAngle;
+                diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+
+                if (Math.abs(diff) < 0.45 && canSee(cam.x, cam.y, player.x, player.y)) {
+                    inSight = true;
+                }
+            }
+        }
+
+        if (inSight) {
+            cam.detecting = true;
+            cam.cooldownTimer = 180;
+            triggerGlobalAlarm();
+        } else {
+            if (cam.cooldownTimer > 0) {
+                cam.cooldownTimer--;
+            } else {
+                cam.detecting = false;
+            }
+        }
+
+        if (cam.detecting) anyCameraDetecting = true;
+    });
+
+    if (!anyCameraDetecting && gateAlarmCooldown <= 0) {
+        document.getElementById('alarm-banner').style.display = 'none';
+    }
+    
+    let aliveCount = 0;
+    enemies.forEach(e => {
+        if (e.hp <= 0) {
+            if (e.deathAlpha > 0) e.deathAlpha -= 0.08;
+            return;
+        }
+        aliveCount++;
+        if (e.hitTimer > 0) e.hitTimer--;
+        if (e.shootCooldown > 0) e.shootCooldown--;
+        if (e.spawnGraceTimer > 0) e.spawnGraceTimer--;
+
+        const inZone = inBlindZone(e.x, e.y);
+        if (inZone && !e.isObserver) {
+            if (Math.random() < 0.1) e.confusedAngle = e.angle + (Math.random() - 0.5) * 2.2;
+            e.angle += (e.confusedAngle - e.angle) * 0.12;
+            return;
+        }
+
+        if (e.confusedTimer > 0 && !e.isObserver) {
+            e.confusedTimer--;
+            return;
+        }
+        
+        const pdx = player.x - e.x, pdy = player.y - e.y;
+        const dist = Math.hypot(pdx, pdy);
+        const visible = canSee(e.x, e.y, player.x, player.y);
+        const playerIsHidden = inBlindZone(player.x, player.y) && !e.isObserver;
+
+        if (e.spawnGraceTimer <= 0 && dist < 280 && visible && !playerIsHidden) {
+            e.alert = true;
+            e.alertCooldown = 300; 
+        }
+        
+        if (e.alert) {
+            if (!visible || playerIsHidden) {
+                e.alertCooldown--;
+                if (e.alertCooldown <= 0) {
+                    e.alert = false;
+                }
+            }
+        }
+
+        if (e.alert && !playerIsHidden && e.spawnGraceTimer <= 0) {
+            e.angle = Math.atan2(pdy, pdx);
+            
+            let moveSpeed = 1.5;
+            let moveAngle = e.angle;
+            
+            const stopDistance = 45;
+            let moved = false;
+
+            if (dist > stopDistance) {
+                let eNextX = e.x + Math.cos(moveAngle) * moveSpeed;
+                let eNextY = e.y + Math.sin(moveAngle) * moveSpeed;
+
+                if (!checkObstacleCollision(eNextX, e.y, 16)) { e.x = eNextX; moved = true; }
+                if (!checkObstacleCollision(e.x, eNextY, 16)) { e.y = eNextY; moved = true; }
+
+                if (!moved) {
+                    let altAngle = moveAngle + Math.PI / 2;
+                    let altX = e.x + Math.cos(altAngle) * moveSpeed;
+                    let altY = e.y + Math.sin(altAngle) * moveSpeed;
+                    if (!checkObstacleCollision(altX, altY, 16)) {
+                        e.x = altX; e.y = altY; moved = true;
+                    }
+                }
+            }
+
+            if (moved) e.walkCycle += 0.15;
+
+            if (visible && e.shootCooldown <= 0) {
+                e.shootCooldown = Math.max(38, 60 - wave * 2);
+                enemyBullets.push({
+                    x: e.x + Math.cos(e.angle) * 20, y: e.y + Math.sin(e.angle) * 20,
+                    vx: Math.cos(e.angle) * 8.5, vy: Math.sin(e.angle) * 8.5,
+                    penetrations: 1
+                });
+            }
+        } else if (waypoints.length > 0) {
+            const target = waypoints[e.targetWaypoint];
+            const tdx = target.x - e.x, tdy = target.y - e.y;
+            if (Math.hypot(tdx, tdy) < 15) {
+                let nextIndex;
+                do { nextIndex = Math.floor(Math.random() * waypoints.length); } while(nextIndex === e.targetWaypoint && waypoints.length > 1);
+                e.targetWaypoint = nextIndex;
+                e.stuckFrames = 0;
+            } else {
+                const moveAngle = Math.atan2(tdy, tdx);
+                e.scanAngle += 0.02;
+                e.angle = moveAngle + Math.sin(e.scanAngle) * 0.2;
+                let pNextX = e.x + Math.cos(moveAngle) * e.patrolSpeed;
+                let pNextY = e.y + Math.sin(moveAngle) * e.patrolSpeed;
+                if (!checkObstacleCollision(pNextX, pNextY, 16)) {
+                    e.x = pNextX; e.y = pNextY; e.walkCycle += 0.1; e.stuckFrames = 0;
+                } else {
+                    e.stuckFrames++;
+                    if (e.stuckFrames > 30) {
+                        e.targetWaypoint = (e.targetWaypoint + 1) % waypoints.length;
+                        e.stuckFrames = 0;
+                    }
+                }
+            }
+        }
+    });
+
+    if (aliveCount === 0) {
+        waveTransitionTimer++;
+        if (waveTransitionTimer > 80) {
+            wave++; waveTransitionTimer = 0;
+            spawnWave();
+        }
+    }
+
+    document.getElementById('player-hp-bar').style.width = (player.hp / player.maxHp * 100) + '%';
+    document.getElementById('player-shield-bar').style.width = (player.shield / player.maxShield * 100) + '%';
+    document.getElementById('blind-energy-bar').style.width = (blindEnergy / MAX_BLIND_ENERGY * 100) + '%';
+    
+    const label = document.getElementById('blind-label');
+    if (blindActive) {
+        label.innerText = "BLIND ZONE ACTIVE // 盲区维持中 [SPACE关闭]";
+        label.style.color = "#FF3344";
+    } else {
+        label.innerText = "BLIND ENERGY // 盲区能量 [SPACE开启]";
+        label.style.color = "#00FF66";
+    }
+
+    document.getElementById('wave-title').innerText = `WAVE: ${wave}`;
+    document.getElementById('enemies-left').innerText = aliveCount > 0 ? `HOSTILES: ${aliveCount}` : `NEXT WAVE INCOMING...`;
+    document.getElementById('score-count').innerText = `KILLS: ${killCount}`;
 }
 
-// 绘制主角视野锥体 (FOV)
-function drawPlayerFOV() {
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(player.x, player.y);
-    ctx.arc(
-        player.x,
-        player.y,
-        player.fovDistance,
-        player.angle - player.fovAngle / 2,
-        player.angle + player.fovAngle / 2
-    );
-    ctx.closePath();
-
-    // 视野透明光束
-    const gradient = ctx.createRadialGradient(
-        player.x, player.y, 10,
-        player.x, player.y, player.fovDistance
-    );
-    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
-    gradient.addColorStop(1, 'rgba(255, 255, 255, 0.01)');
-
-    ctx.fillStyle = gradient;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.restore();
-}
-
-// 绘制所有敌人 (加入 isInFOV 判定)
-function drawEnemies() {
-    if (!window.enemies) return;
-
-    window.enemies.forEach(enemy => {
-        // 核心修改：只有在主角视野范围内的敌人，才会被渲染显示
-        if (!isInFOV(enemy)) return;
-
+function drawZones() {
+    zones.forEach(z => {
         ctx.save();
-
-        // 绘制敌人的警戒视线扇形
-        if (enemy.fovAngle && enemy.fovDistance) {
-            ctx.beginPath();
-            ctx.moveTo(enemy.x, enemy.y);
-            ctx.arc(
-                enemy.x,
-                enemy.y,
-                enemy.fovDistance,
-                (enemy.angle || 0) - enemy.fovAngle / 2,
-                (enemy.angle || 0) + enemy.fovAngle / 2
-            );
-            ctx.closePath();
-            ctx.fillStyle = enemy.alert ? 'rgba(255, 77, 77, 0.2)' : 'rgba(255, 204, 0, 0.1)';
-            ctx.fill();
-        }
-
-        // 绘制敌人本体圆圈
-        ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, enemy.radius || 10, 0, Math.PI * 2);
-        ctx.fillStyle = enemy.alert ? '#ff3333' : '#e6b800';
-        ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // 绘制敌人朝向线
-        if (enemy.angle !== undefined) {
-            ctx.beginPath();
-            ctx.moveTo(enemy.x, enemy.y);
-            ctx.lineTo(
-                enemy.x + Math.cos(enemy.angle) * ((enemy.radius || 10) + 5),
-                enemy.y + Math.sin(enemy.angle) * ((enemy.radius || 10) + 5)
-            );
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
-
-        // 绘制警觉度/状态指示
-        if (enemy.alert) {
-            ctx.fillStyle = '#ff0000';
-            ctx.font = 'bold 12px sans-serif';
-            ctx.fillText('!', enemy.x - 3, enemy.y - (enemy.radius || 10) - 6);
-        }
-
+        ctx.strokeStyle = 'rgba(0, 255, 102, 0.08)';
+        ctx.strokeRect(z.x, z.y, z.w, z.h);
+        ctx.fillStyle = 'rgba(0, 255, 102, 0.35)';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText(z.name, z.x + 8, z.y + 16);
         ctx.restore();
     });
 }
 
-// 绘制主角本体
-function drawPlayer() {
+function drawProps() {
+    props.forEach(p => {
+        ctx.save();
+        if (p.type === 'desk') {
+            ctx.fillStyle = 'rgba(0, 255, 102, 0.05)';
+            ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
+            ctx.fillStyle = 'rgba(0, 255, 102, 0.3)';
+            ctx.font = '9px monospace';
+            ctx.fillText(p.label || "DESK", p.x + 6, p.y + 15);
+        } else if (p.type === 'chair_group') {
+            ctx.strokeStyle = 'rgba(0, 255, 102, 0.3)';
+            ctx.lineWidth = 1;
+            for(let i = 0; i < 4; i++) {
+                ctx.strokeRect(p.x + i * 22, p.y, 16, 16);
+                ctx.strokeRect(p.x + i * 22 + 3, p.y + 3, 10, 10);
+            }
+        } else if (p.type === 'conveyor') {
+            ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
+            ctx.strokeStyle = 'rgba(0, 204, 255, 0.5)';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
+            ctx.strokeStyle = 'rgba(0, 204, 255, 0.25)';
+            for(let x = p.x + 10; x < p.x + p.w; x += 15) {
+                ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x - 5, p.y + p.h); ctx.stroke();
+            }
+            if (p.label) {
+                ctx.fillStyle = 'rgba(0, 204, 255, 0.5)';
+                ctx.font = '9px monospace';
+                ctx.fillText(p.label, p.x + 6, p.y + 15);
+            }
+        }
+        ctx.restore();
+    });
+}
+
+function drawObstacle(obs) {
     ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(obs.x + 4, obs.y + 4, obs.w, obs.h);
 
-    // 主角外轮廓与圆圈
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-    ctx.fillStyle = '#3a9bdc';
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    if (obs.type === 'solid') {
+        ctx.fillStyle = '#08140E';
+        ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+        ctx.strokeStyle = '#00FF66';
+        ctx.lineWidth = 1.8;
+        ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+    } else if (obs.type === 'glass') {
+        ctx.fillStyle = 'rgba(0, 204, 255, 0.08)';
+        ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+        ctx.strokeStyle = 'rgba(0, 204, 255, 0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 3]);
+        ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#00CCFF';
+        ctx.fillRect(obs.x - 2, obs.y - 2, 5, 5);
+        ctx.fillRect(obs.x + obs.w - 3, obs.y + obs.h - 3, 5, 5);
+    } else if (obs.type === 'low_wall') {
+        ctx.fillStyle = 'rgba(255, 153, 0, 0.18)';
+        ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+        ctx.strokeStyle = '#FF9900';
+        ctx.lineWidth = 1.8;
+        ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+    }
 
-    // 枪口朝向
-    ctx.beginPath();
-    ctx.moveTo(player.x, player.y);
-    ctx.lineTo(
-        player.x + Math.cos(player.angle) * (player.radius + 7),
-        player.y + Math.sin(player.angle) * (player.radius + 7)
-    );
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-
+    if (obs.label) {
+        ctx.fillStyle = obs.type === 'glass' ? '#00CCFF' : '#FF9900';
+        ctx.font = '9px monospace';
+        ctx.fillText(obs.label, obs.x + 4, obs.y - 5);
+    }
     ctx.restore();
 }
 
-// 主绘制入口
-function draw() {
-    drawEnvironment();
-    drawPlayerFOV();
-    drawEnemies();
-    drawPlayer();
+function drawSecurityGates() {
+    securityGates.forEach(gate => {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 51, 68, 0.10)';
+        ctx.fillRect(gate.x, gate.y, gate.w, gate.h);
+        ctx.strokeStyle = '#FF3344';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(gate.x, gate.y, gate.w, gate.h);
+        
+        ctx.fillStyle = '#FF3344';
+        ctx.fillRect(gate.x - 2, gate.y - 2, 6, 4);
+        ctx.fillRect(gate.x - 2, gate.y + gate.h - 2, 6, 4);
+
+        ctx.strokeStyle = 'rgba(255, 51, 68, 0.8)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(gate.x + gate.w / 2, gate.y);
+        ctx.lineTo(gate.x + gate.w / 2, gate.y + gate.h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = '#FF3344';
+        ctx.font = '8px monospace';
+        ctx.fillText(gate.label, gate.x - 15, gate.y - 5);
+        ctx.restore();
+    });
 }
 
-// --- 游戏主循环 (GameLoop) ---
+function drawWeaponIcons() {
+    const startX = 25;
+    const startY = height - 55;
+    const boxSize = 40;
+    const gap = 10;
+
+    let index = 0;
+    for (let key in WEAPONS) {
+        let w = WEAPONS[key];
+        let x = startX + index * (boxSize + gap);
+        let y = startY;
+        let isUnlocked = unlockedWeapons.includes(w.id);
+        let isSelected = (w.id === currentWeapon.id);
+
+        ctx.save();
+        if (!isUnlocked) {
+            ctx.fillStyle = 'rgba(15, 20, 18, 0.6)';
+            ctx.strokeStyle = 'rgba(80, 100, 90, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.fillRect(x, y, boxSize, boxSize);
+            ctx.strokeRect(x, y, boxSize, boxSize);
+            ctx.strokeStyle = 'rgba(80, 100, 90, 0.3)';
+            ctx.fillStyle = 'rgba(80, 100, 90, 0.3)';
+        } else {
+            ctx.fillStyle = isSelected ? 'rgba(0, 255, 102, 0.28)' : 'rgba(4, 16, 10, 0.85)';
+            ctx.strokeStyle = isSelected ? '#FFFF00' : 'rgba(0, 255, 102, 0.4)';
+            ctx.lineWidth = isSelected ? 2 : 1;
+            ctx.fillRect(x, y, boxSize, boxSize);
+            ctx.strokeRect(x, y, boxSize, boxSize);
+            ctx.strokeStyle = isSelected ? '#FFFF00' : '#00FF66';
+            ctx.fillStyle = isSelected ? '#FFFF00' : '#00FF66';
+        }
+        ctx.lineWidth = 1.5;
+        const cx = x + boxSize / 2;
+        const cy = y + boxSize / 2;
+
+        ctx.beginPath();
+        if (w.id === 1) {
+            ctx.strokeRect(cx - 12, cy - 2, 18, 4);
+            ctx.fillRect(cx + 6, cy - 1, 5, 2);
+            ctx.fillRect(cx - 4, cy + 2, 3, 6);
+        } else if (w.id === 2) {
+            ctx.strokeRect(cx - 7, cy - 3, 12, 3);
+            ctx.fillRect(cx - 5, cy, 4, 7);
+        } else if (w.id === 3) {
+            ctx.strokeRect(cx - 14, cy - 2, 18, 2);
+            ctx.fillRect(cx + 4, cy - 1, 8, 1);
+            ctx.fillRect(cx - 4, cy - 4, 8, 2);
+        } else if (w.id === 4) {
+            ctx.strokeRect(cx - 9, cy - 3, 14, 4);
+            ctx.fillRect(cx, cy + 1, 3, 7);
+        } else if (w.id === 5) {
+            ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillRect(cx - 1.5, cy - 7, 3, 3);
+        }
+        ctx.stroke();
+
+        ctx.restore();
+        index++;
+    }
+}
+
+function drawCamera(cam) {
+    ctx.save();
+    ctx.translate(cam.x, cam.y);
+    
+    ctx.fillStyle = cam.detecting ? 'rgba(255, 51, 51, 0.35)' : 'rgba(0, 255, 102, 0.12)';
+    ctx.beginPath(); 
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, 320, cam.currentAngle - 0.45, cam.currentAngle + 0.45);
+    ctx.closePath(); 
+    ctx.fill();
+
+    ctx.fillStyle = '#1A241F'; 
+    ctx.strokeStyle = cam.detecting ? '#FF3344' : '#00FF66'; 
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); 
+    ctx.arc(0, 0, 12, 0, Math.PI * 2); 
+    ctx.fill(); 
+    ctx.stroke();
+
+    ctx.rotate(cam.currentAngle);
+    ctx.fillStyle = '#060B08'; 
+    ctx.fillRect(-4, -6, 16, 12); 
+    ctx.strokeRect(-4, -6, 16, 12);
+    ctx.restore();
+}
+
+function drawDropItems() {
+    dropItems.forEach(item => {
+        ctx.save();
+        ctx.translate(item.x, item.y);
+        ctx.shadowBlur = 12;
+        if (item.type === 'medkit') {
+            ctx.fillStyle = '#00FF66'; ctx.shadowColor = '#00FF66';
+            ctx.fillRect(-9, -9, 18, 18);
+            ctx.fillStyle = '#000'; ctx.fillRect(-2, -6, 4, 12); ctx.fillRect(-6, -2, 12, 4);
+        } else if (item.type === 'battery') {
+            ctx.fillStyle = '#00CCFF'; ctx.shadowColor = '#00CCFF';
+            ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#000'; ctx.fillRect(-4, -4, 8, 8);
+        } else if (item.type === 'weapon') {
+            ctx.fillStyle = '#FFFF00'; ctx.shadowColor = '#FFFF00';
+            ctx.fillRect(-9, -9, 18, 18);
+            ctx.fillStyle = '#000'; ctx.font = 'bold 11px monospace';
+            ctx.fillText("W", -4, 4);
+        }
+        ctx.restore();
+    });
+}
+
+function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendingDamage, alpha = 1.0, isObserver = false, enemyShield = 0, maxShield = 80, alert = false) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+
+    const isInBlind = !isPlayer && inBlindZone(x, y);
+
+    if ((hp < maxHp || !isPlayer) && hp > 0) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(-20, -36, 40, 5);
+        ctx.fillStyle = isPlayer ? '#00FF66' : (isInBlind ? '#FFFF00' : '#FF3344');
+        ctx.fillRect(-20, -36, (Math.max(0, hp) / maxHp) * 40, 5);
+        
+        if (enemyShield > 0) {
+            ctx.fillStyle = '#00CCFF';
+            ctx.fillRect(-20, -42, (enemyShield / maxShield) * 40, 4);
+        }
+    }
+
+    ctx.rotate(angle);
+    
+    let mainColor = '#FF3344';
+    if (isPlayer) {
+        mainColor = '#00FF66';
+    } else if (isInBlind) {
+        mainColor = '#FFFF00';
+    } else if (isObserver) {
+        mainColor = alert ? '#FF3344' : '#00CCFF';
+    } else if (hitFlash) {
+        mainColor = '#FFFFFF';
+    }
+
+    const darkColor = isPlayer ? '#0D1A12' : (isInBlind ? '#332E0A' : (isObserver ? '#051A24' : '#220D0F'));
+    const legOffset = Math.sin(walkCycle) * 6;
+    ctx.fillStyle = '#050A07';
+    ctx.fillRect(-8, -12 + legOffset, 8, 5); ctx.fillRect(-8, 7 - legOffset, 8, 5);
+
+    ctx.fillStyle = '#0A120E'; ctx.fillRect(-15, -9, 6, 18);
+    ctx.fillStyle = darkColor; ctx.strokeStyle = mainColor; ctx.lineWidth = isInBlind ? 2.8 : 1.8;
+    ctx.beginPath(); ctx.roundRect(-10, -11, 16, 22, 4); ctx.fill(); ctx.stroke();
+
+    if (isInBlind && hp > 0) {
+        ctx.strokeStyle = '#FFFF00'; ctx.lineWidth = 2; ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    if (isObserver && enemyShield > 0) {
+        ctx.strokeStyle = '#00CCFF'; ctx.lineWidth = 2; ctx.shadowColor = '#00CCFF'; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(0, 0, 21, 0, Math.PI * 2); ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    if (isPlayer && player.shieldActive) {
+        ctx.strokeStyle = '#00CCFF'; ctx.shadowColor = '#00CCFF'; ctx.shadowBlur = 12; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(8, 0, 22, -Math.PI / 2.2, Math.PI / 2.2); ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    ctx.fillStyle = '#0A120E'; ctx.fillRect(2, -10, 10, 4); ctx.fillRect(2, 6, 10, 4);
+    ctx.fillStyle = '#040806'; ctx.fillRect(4, 2, 22, 5);
+    ctx.fillStyle = mainColor; ctx.fillRect(20, 3, 6, 3);
+
+    if (isPlayer && player.flashTimer > 0) {
+        ctx.fillStyle = '#FFFF88'; ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(29, 4, 6, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+    }
+
+    ctx.fillStyle = '#060B08'; ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = mainColor; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = mainColor; ctx.shadowColor = mainColor; ctx.shadowBlur = 8;
+    ctx.fillRect(3, -5, 3, 10); ctx.shadowBlur = 0;
+
+    ctx.restore();
+
+    if (isInBlind && hp > 0) {
+        ctx.fillStyle = '#FFFF00'; ctx.font = 'bold 10px monospace';
+        ctx.fillText("[IN BLIND ZONE]", x - 35, y - 46);
+    } else if (!isPlayer && isObserver && hp > 0) {
+        ctx.fillStyle = alert ? '#FF3344' : '#00CCFF'; ctx.font = 'bold 9px monospace';
+        ctx.fillText("[OBSERVER]", x - 26, y - 46);
+    }
+
+    if (!isPlayer && pendingDamage > 0 && hp > 0) {
+        ctx.fillStyle = '#00FF66'; ctx.font = 'bold 10px monospace';
+        ctx.fillText(`[DEBT: ${pendingDamage}]`, x - 26, y - (isInBlind ? 58 : 46));
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, width, height);
+    
+    ctx.strokeStyle = '#08120B'; ctx.lineWidth = 1;
+    for(let x = 0; x < width; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); }
+    for(let y = 0; y < height; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+    
+    drawZones();
+    drawProps();
+    obstacles.forEach(drawObstacle);
+    drawSecurityGates();
+
+    if (player.hp > 0) {
+        drawTacticalFOV(player.x, player.y, player.angle, player.fov, player.viewDistance, 'rgba(0, 255, 102, 0.12)', 'rgba(0, 255, 102, 0.4)');
+    }
+
+    if (blindActive && blindZone) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(4, 14, 9, 0.92)';
+        ctx.beginPath(); ctx.arc(blindZone.x, blindZone.y, blindZone.radius, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#00FF66'; ctx.setLineDash([8, 6]); ctx.lineWidth = 2; ctx.stroke();
+        ctx.restore();
+    }
+
+    enemies.forEach(e => {
+        if (e.hp <= 0 && e.deathAlpha <= 0) return;
+        if (e.hp > 0 && (!inBlindZone(e.x, e.y) || e.isObserver) && e.confusedTimer <= 0) {
+            let fovFill = e.alert ? 'rgba(255, 51, 51, 0.15)' : (e.isObserver ? 'rgba(0, 204, 255, 0.12)' : 'rgba(255, 200, 0, 0.08)');
+            let fovStroke = e.alert ? 'rgba(255, 51, 51, 0.4)' : null;
+            drawTacticalFOV(e.x, e.y, e.angle, Math.PI / 3, 260, fovFill, fovStroke);
+        }
+        drawAgent(e.x, e.y, e.angle, false, e.walkCycle, e.hitTimer > 0, e.hp, e.maxHp, e.pendingDamage, e.deathAlpha, e.isObserver, e.shield, e.maxShield, e.alert);
+    });
+
+    cameras.forEach(drawCamera);
+    drawDropItems();
+    
+    if (player.hp > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(0, 255, 102, 0.25)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke();
+        ctx.strokeStyle = '#00FF66'; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 6, 0, Math.PI*2); ctx.stroke();
+        ctx.restore();
+        drawAgent(player.x, player.y, player.angle, true, player.walkCycle, false, player.hp, player.maxHp, 0, 1.0);
+    }
+    
+    particles.forEach(p => {
+        ctx.save();
+        ctx.globalAlpha = p.life / p.maxLife;
+        ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 6;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    });
+
+    grenades.forEach(g => {
+        ctx.save();
+        ctx.fillStyle = '#FF9900'; ctx.shadowColor = '#FF5500'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(g.x, g.y, g.radius, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    });
+
+    ctx.fillStyle = '#00FF66'; ctx.shadowColor = '#00FF66'; ctx.shadowBlur = 8;
+    playerBullets.forEach(b => { 
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.radius || 3.5, 0, Math.PI*2); ctx.fill(); 
+    });
+    
+    ctx.fillStyle = '#FF3344'; ctx.shadowColor = '#FF3344'; ctx.shadowBlur = 8;
+    enemyBullets.forEach(eb => { ctx.beginPath(); ctx.arc(eb.x, eb.y, 3.5, 0, Math.PI*2); ctx.fill(); });
+    
+    ctx.shadowBlur = 0;
+
+    drawWeaponIcons();
+}
+
 function gameLoop() {
-    update();
-    draw();
+    update(); draw();
     requestAnimationFrame(gameLoop);
 }
 
-// 启动引擎主循环
+// 初始化运行
+resizeCanvas();
+spawnWave();
 gameLoop();
