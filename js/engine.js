@@ -178,6 +178,28 @@ function canSee(fromX, fromY, toX, toY) {
     return true;
 }
 
+function isInFOV(target) {
+    if (!target) return false;
+    const dx = target.x - player.x;
+    const dy = target.y - player.y;
+    const dist = Math.hypot(dx, dy);
+
+    // 1. 超出最大视角距离不可见
+    if (dist > player.viewDistance) return false;
+
+    // 2. 判断是否在玩家视野弧度扇形内
+    const targetAngle = Math.atan2(dy, dx);
+    let angleDiff = targetAngle - player.angle;
+
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+
+    if (Math.abs(angleDiff) > player.fov / 2) return false;
+
+    // 3. 检查是否有障碍物遮挡 (利用你原本的 canSee 函数)
+    return canSee(player.x, player.y, target.x, target.y);
+}
+
 function triggerGlobalAlarm() {
     document.getElementById('alarm-banner').style.display = 'block';
     enemies.forEach(e => {
@@ -1126,14 +1148,18 @@ function draw() {
     }
 
     enemies.forEach(e => {
-        if (e.hp <= 0 && e.deathAlpha <= 0) return;
+    if (e.hp <= 0 && e.deathAlpha <= 0) return;
+
+    // 【新增核心逻辑】：只有在主角视野内（且没被墙挡住），或者在盲区激活时，才绘制敌人
+    if (isInFOV(e) || inBlindZone(e.x, e.y)) {
         if (e.hp > 0 && (!inBlindZone(e.x, e.y) || e.isObserver) && e.confusedTimer <= 0) {
             let fovFill = e.alert ? 'rgba(255, 51, 51, 0.15)' : (e.isObserver ? 'rgba(0, 204, 255, 0.12)' : 'rgba(255, 200, 0, 0.08)');
             let fovStroke = e.alert ? 'rgba(255, 51, 51, 0.4)' : null;
             drawTacticalFOV(e.x, e.y, e.angle, Math.PI / 3, 260, fovFill, fovStroke);
         }
         drawAgent(e.x, e.y, e.angle, false, e.walkCycle, e.hitTimer > 0, e.hp, e.maxHp, e.pendingDamage, e.deathAlpha, e.isObserver, e.shield, e.maxShield, e.alert);
-    });
+    }
+});
 
     cameras.forEach(drawCamera);
     drawDropItems();
