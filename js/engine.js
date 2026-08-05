@@ -1042,6 +1042,7 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
 
     const isInBlind = !isPlayer && inBlindZone(x, y);
 
+    // ------------------- 1. 头顶血条与护盾 -------------------
     if ((hp < maxHp || !isPlayer) && hp > 0) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(-20, -36, 40, 5);
         ctx.fillStyle = isPlayer ? '#00FF66' : (isInBlind ? '#FFFF00' : '#FF3344');
@@ -1055,6 +1056,7 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
 
     ctx.rotate(angle);
     
+    // 决定色彩
     let mainColor = '#FF3344';
     if (isPlayer) {
         mainColor = '#00FF66';
@@ -1067,14 +1069,41 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
     }
 
     const darkColor = isPlayer ? '#0D1A12' : (isInBlind ? '#332E0A' : (isObserver ? '#051A24' : '#220D0F'));
-    const legOffset = Math.sin(walkCycle) * 6;
-    ctx.fillStyle = '#050A07';
-    ctx.fillRect(-8, -12 + legOffset, 8, 5); ctx.fillRect(-8, 7 - legOffset, 8, 5);
 
-    ctx.fillStyle = '#0A120E'; ctx.fillRect(-15, -9, 6, 18);
-    ctx.fillStyle = darkColor; ctx.strokeStyle = mainColor; ctx.lineWidth = isInBlind ? 2.8 : 1.8;
-    ctx.beginPath(); ctx.roundRect(-10, -11, 16, 22, 4); ctx.fill(); ctx.stroke();
+    // ------------------- 2. 四肢：战术靴与步态动画 -------------------
+    const legOffset = Math.sin(walkCycle) * 5;
+    ctx.fillStyle = '#080D0A';
+    // 左靴/右靴
+    ctx.beginPath(); ctx.roundRect(-8, -11 + legOffset, 7, 5, 2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(-8, 6 - legOffset, 7, 5, 2); ctx.fill();
 
+    // ------------------- 3. 躯干：战术防弹衣 & 弹匣挂包 (无背包) -------------------
+    // 3.1 防弹衣基底
+    ctx.fillStyle = darkColor; 
+    ctx.strokeStyle = mainColor; 
+    ctx.lineWidth = isInBlind ? 2.8 : 1.8;
+    ctx.beginPath(); 
+    ctx.roundRect(-10, -10, 17, 20, 4); 
+    ctx.fill(); 
+    ctx.stroke();
+
+    // 3.2 胸前/背部战术插板 (Plate Carrier)
+    ctx.fillStyle = '#141E18';
+    ctx.beginPath(); ctx.roundRect(-7, -7, 12, 14, 2); ctx.fill();
+
+    // 3.3 战术弹匣包 (Pouches)
+    ctx.fillStyle = '#1E2B23';
+    ctx.fillRect(-2, -8, 4, 2);
+    ctx.fillRect(3, -8, 4, 2);
+    ctx.fillRect(-2, 6, 4, 2);
+    ctx.fillRect(3, 6, 4, 2);
+
+    // 3.4 肩章
+    ctx.fillStyle = mainColor;
+    ctx.fillRect(-4, -9, 4, 1.5);
+    ctx.fillRect(-4, 7.5, 4, 1.5);
+
+    // ------------------- 4. 技能与状态光环 -------------------
     if (isInBlind && hp > 0) {
         ctx.strokeStyle = '#FFFF00'; ctx.lineWidth = 2; ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.stroke();
@@ -1093,22 +1122,82 @@ function drawAgent(x, y, angle, isPlayer, walkCycle, hitFlash, hp, maxHp, pendin
         ctx.shadowBlur = 0;
     }
 
-    ctx.fillStyle = '#0A120E'; ctx.fillRect(2, -10, 10, 4); ctx.fillRect(2, 6, 10, 4);
-    ctx.fillStyle = '#040806'; ctx.fillRect(4, 2, 22, 5);
-    ctx.fillStyle = mainColor; ctx.fillRect(20, 3, 6, 3);
+    // ------------------- 5. 极简精细枪械 -------------------
+    ctx.save();
+    ctx.translate(4, 3); // 枪械基底偏移
 
-    if (isPlayer && player.flashTimer > 0) {
-        ctx.fillStyle = '#FFFF88'; ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 10;
-        ctx.beginPath(); ctx.arc(29, 4, 6, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
-    }
+    // 5.1 枪托
+    ctx.fillStyle = '#111A14';
+    ctx.fillRect(-4, -1.5, 4, 3);
 
-    ctx.fillStyle = '#060B08'; ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = mainColor; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = mainColor; ctx.shadowColor = mainColor; ctx.shadowBlur = 8;
-    ctx.fillRect(3, -5, 3, 10); ctx.shadowBlur = 0;
+    // 5.2 枪身
+    ctx.fillStyle = '#050A07';
+    ctx.fillRect(0, -2, 16, 4);
+
+    // 5.3 顶部战术导轨与瞄具
+    ctx.fillStyle = '#223328';
+    ctx.fillRect(2, -2.8, 8, 1);
+    ctx.fillStyle = mainColor; // 全息瞄具发光点
+    ctx.fillRect(5, -3.3, 2, 1);
+
+    // 5.4 侧挂激光/战术手电
+    ctx.fillStyle = '#111A14';
+    ctx.fillRect(6, 1.8, 4, 1.5);
+
+    // 5.5 枪口消音器/制退器
+    ctx.fillStyle = '#223328';
+    ctx.fillRect(16, -2.5, 4, 5);
+
+    // 5.6 枪口前端微光
+    ctx.fillStyle = mainColor;
+    ctx.fillRect(19, -1, 2, 2);
 
     ctx.restore();
 
+    // ------------------- 6. 战术双手 (Hands & Gloves) -------------------
+    ctx.fillStyle = '#141E18';
+    ctx.strokeStyle = mainColor;
+    ctx.lineWidth = 1;
+
+    // 左手 (握持枪身前护木)
+    ctx.beginPath(); ctx.arc(14, -2, 2.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // 右手 (握持后握把)
+    ctx.beginPath(); ctx.arc(5, 5, 2.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+    // 开火枪口焰
+    if (isPlayer && player.flashTimer > 0) {
+        ctx.fillStyle = '#FFFF88'; ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(26, 3, 6, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+    }
+
+    // ------------------- 7. 头盔与双筒夜视仪 (Helmet & NVG) -------------------
+    // 7.1 战术头盔
+    ctx.fillStyle = '#060B08'; 
+    ctx.beginPath(); ctx.arc(0, 0, 8.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = mainColor; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // 7.2 墨镜/战术护目镜
+    ctx.fillStyle = '#020403';
+    ctx.fillRect(3, -5, 2, 10);
+
+    // 7.3 双筒夜视仪 (NVG) 镜筒结构
+    ctx.fillStyle = '#141E18';
+    ctx.fillRect(5, -4, 4, 2.5); // 上镜筒
+    ctx.fillRect(5, 1.5, 4, 2.5); // 下镜筒
+
+    // 7.4 夜视仪镜头镀膜发光点
+    ctx.fillStyle = mainColor;
+    ctx.shadowColor = mainColor;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(9, -2.7, 1, 0, Math.PI * 2);
+    ctx.arc(9, 2.7, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0; // 恢复 shadowBlur
+
+    ctx.restore();
+
+    // ------------------- 8. 文字标识 (不随视角旋转) -------------------
     if (isInBlind && hp > 0) {
         ctx.fillStyle = '#FFFF00'; ctx.font = 'bold 10px monospace';
         ctx.fillText("[IN BLIND ZONE]", x - 35, y - 46);
